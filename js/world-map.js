@@ -86,16 +86,19 @@ export function generateWorld() {
   const zones = [];
   for (let i = 0; i < ZONE_COUNT; i += 1) {
     const dangerTier = STATIC_DEPTHS[i];
-    zones[i] = generateMicroZone(i, dangerTier);
     const def = STATIC_ZONE_GRAPH[i];
     const children = def.children.map(String);
     if (def.gatesToCapital) children.push('capital');
+    
+    // 👇 ส่งเฉพาะทางออกจริง (children) ไปให้แมพย่อย เพื่อสร้างบอสตามจำนวนนั้น
+    zones[i] = generateMicroZone(i, dangerTier, { exits: def.children.map(String) });
+    
     nodes[String(i)] = {
       id: String(i), kind: MacroKind.ZONE, zoneIndex: i, connectsTo: children,
       dangerTier, deadEnd: !!def.deadEnd, outer: false,
     };
   }
-
+ 
   const world = {
     zones,
     macro: { nodes, startId: 'start', capitalId: 'capital', nextOuterIndex: ZONE_COUNT, smugglerNodeId: null },
@@ -118,8 +121,24 @@ function isFootholdSecured(node, world) {
 export function getAvailableMacroNodeIds(macro, world, currentMacroId) {
   if (!currentMacroId) return new Set([macro.startId]);
   const node = findMacroNode(macro, currentMacroId);
-  if (!isFootholdSecured(node, world)) return new Set(); // still fighting through — no fork to choose yet
-  return new Set(node.connectsTo);
+
+  const available = new Set();
+  if (node.kind === MacroKind.HUB) {
+    if (node.visited) node.connectsTo.forEach((id) => available.add(id));
+  } else {
+    // 👇 อนุญาตให้วาปแผนที่โลกไปต่อได้ ก็ต่อเมื่อสู้ชนะบอสที่เฝ้าเส้นทางนั้นไว้แล้วเท่านั้น
+    const zone = world.zones[node.zoneIndex];
+    if (zone) {
+      if (zone.outer && zone.lordDefeated) {
+        // แผนที่ด่านลึก (Outer Zones) ชนะบอสตัวเดียวปลดล็อกทุกทาง
+        node.connectsTo.forEach((id) => available.add(id));
+      } else if (zone.defeatedLords) {
+        // แผนที่เนื้อเรื่องหลัก มีบอสเฝ้าทางแยกแบบ 1-ต่อ-1
+        zone.defeatedLords.forEach((id) => available.add(id));
+      }
+    }
+  }
+  return available;
 }
 
 export function isMacroNodeDiscovered(node, world) {

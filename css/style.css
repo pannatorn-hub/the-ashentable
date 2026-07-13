@@ -290,6 +290,11 @@ h3 { font-family: var(--font-display); font-size: 1.05rem; margin: 0 0 8px; }
 .item-passive.unlocked { color: var(--gold-bright); }
 .item-passive.locked { color: var(--parchment-dim); opacity: 0.75; font-style: italic; }
 .runesmith-card { border-color: rgba(243, 212, 136, 0.45); }
+/* v9 */
+.save-warning { margin: 8px auto; padding: 8px 14px; max-width: 620px; text-align: center; font-size: 0.8rem;
+  color: #f3d488; background: rgba(139, 26, 61, 0.28); border: 1px solid rgba(178, 58, 72, 0.6); border-radius: 8px; }
+.boss-gate { margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(224, 185, 89, 0.28); }
+.map-node.lord-slain { opacity: 0.9; filter: grayscale(0.35); }
 .loot-actions { display: flex; gap: 8px; }
 
 .portrait-large { margin: 8px 0 20px; }

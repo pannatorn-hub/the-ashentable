@@ -969,8 +969,8 @@ export class GameController {
     const bs = this.battleState;
     if (!bs) return;
     this.battleMounted = true;
-    // The opening enemy volley (startBattle's tick) is already rendered in the
-    // initial HTML — HP and log reflect it. Replays begin from the player's first action.
+    
+    // โค้ดดึงตัวแปร q และ animRefs ปล่อยไว้เหมือนเดิมครับ
     const q = (sel) => this.root.querySelector(sel);
     this.animRefs = {
       arena: q('.battle-arena'),
@@ -983,13 +983,28 @@ export class GameController {
       logList: q('.battle-log'),
       fxLayer: q('.battle-fx-layer'),
       skillBar: q('.skill-bar'),
-      // maxHp is battle-stable for both sides (no maxHp buffs exist);
-      // captured once so per-event HP tweening never recomputes stats.
       playerMaxHp: getEffectiveStats(bs, 'player').maxHp,
       enemyMaxHp: getEffectiveStats(bs, 'enemy').maxHp,
     };
+
     const stage = q('.battle-stage');
-    if (stage) stage.addEventListener('pointerdown', () => this.animator.skip());
+    if (stage) stage.addEventListener('pointerdown', (e) => {
+      // 1. ดักบัค Ghost Click เวลากดข้ามจอเร็วๆ
+      if (this.animator.playing) {
+        e.preventDefault();
+        this.animator.skip();
+      }
+    });
+
+    // 👇 2. เพิ่มเงื่อนไขนี้ลงไป: ถ้าโดนตีตายตั้งแต่เทิร์น 0 ให้จบการต่อสู้ทันที
+    if (bs.finished) {
+      this.lockSkillBar(); // ปิดปุ่มกดสกิล
+      setTimeout(() => {
+        if (this.battleState !== bs) return; // กันบัคหน้าจอซ้อน
+        if (this.pvpMode) this.concludePvpBattle();
+        else this.concludeNodeBattle();
+      }, 1500); // ดีเลย์ 1.5 วินาที ให้เราทันได้เห็นความตายของตัวเอง ก่อนเด้งไปหน้าจอแพ้
+    }
   }
 
   renderAwakenBanner() {

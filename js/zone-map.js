@@ -272,7 +272,9 @@ export function dangerMultiplier(dangerTier) {
 const TIER_MULT = { [NodeType.NORMAL]: 1, [NodeType.HARD]: 1.3, [NodeType.ELITE]: 1.7, [NodeType.LORD]: 2.3 };
 
 export function generateEnemyForNode(node, zone, playerLevel) {
-  const scale = (TIER_MULT[node.type] || 1) * dangerMultiplier(zone.dangerTier) * depthMultiplier(node.depth) * (1 + (playerLevel - 1) * 0.06);
+  // เติม * 0.5 ต่อท้ายเข้าไปเพื่อลดสเกลความเก่งของมอนสเตอร์ทุกตัวลง 50%
+  const scale = ((TIER_MULT[node.type] || 1) * dangerMultiplier(zone.dangerTier) * depthMultiplier(node.depth) * (1 + (playerLevel - 1) * 0.06)) * 0.5;
+  
   const wobble = () => 0.85 + Math.random() * 0.3;
   const isLord = node.type === NodeType.LORD;
 
@@ -286,7 +288,7 @@ export function generateEnemyForNode(node, zone, playerLevel) {
     stats: {
       atk: Math.round(9 * scale * wobble()),
       def: Math.round(6 * scale * wobble()),
-      maxHp: Math.round(50 * scale * wobble()),
+      maxHp: Math.round(50 * scale * wobble()), // เลือดจะโดนหั่นครึ่งตามสเกลอัตโนมัติ
       speed: Math.round(8 * (isLord ? 1.15 : 1) * wobble()),
       dodge: Math.round(4 + (isLord ? 6 : node.type === NodeType.ELITE ? 4 : 0)),
       accuracy: Math.round(3 + zone.dangerTier * 1.5 + node.depth),

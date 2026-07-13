@@ -73,6 +73,10 @@ export class Player {
     // v6: the class's Hidden Unique Skill starts dormant.
     this.hiddenAwakened = false;
 
+    // v8: equipment passives (vampiric/thorns/fleetfoot) start DORMANT.
+    // Awakened once — permanently — by the Hidden Runesmith event (Zone 5 town).
+    this.passivesUnlocked = false;
+
     this.maxCP = 0;    // leaderboard: highest CP ever reached
     this.maxZone = 1;  // leaderboard: deepest zone reached (1-based)
 
@@ -214,6 +218,7 @@ export class Player {
       worldVisionRange: this.worldVisionRange,
       renameCount: this.renameCount,
       hiddenAwakened: this.hiddenAwakened,
+      passivesUnlocked: this.passivesUnlocked,
     };
   }
 
@@ -236,6 +241,7 @@ export class Player {
     p.worldVisionRange = data.worldVisionRange || 1; // v5-save migration
     p.renameCount = data.renameCount || 0;
     p.hiddenAwakened = !!data.hiddenAwakened;        // v6-save migration
+    p.passivesUnlocked = !!data.passivesUnlocked;    // v8-save migration: old saves default to dormant
     return p;
   }
 }

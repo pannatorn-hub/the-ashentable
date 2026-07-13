@@ -449,19 +449,19 @@ export class GameController {
 
   // ---------------- Zone / node selection (micro layer) ----------------
 
-selectNode(nodeId) {
+  selectNode(nodeId) {
     const zone = this.currentZone();
     const node = findNode(zone, nodeId);
     if (!node) return;
     const available = getAvailableNodeIds(zone, this.currentNodeId);
     const visible = computeVisibleNodeIds(zone, this.currentNodeId, this.player.visionRange);
     
-    // 👇 เอาเงื่อนไข 'node.cleared' ตรงบรรทัดนี้ออกไป เพื่อให้กดช่องเก่าได้
+    // 1. ลบ || node.cleared ออก เพื่อให้กดช่องเก่าได้
     if (!available.has(nodeId) || !visible.has(nodeId)) return;
 
     this.activeNode = node;
 
-    // 👇 ถ้าช่องนั้นเคลียร์แล้ว (มอนสเตอร์ตายแล้ว) ให้ตัวละครเดินไปยืนช่องนั้นฟรีๆ ทันที
+    // 2. ถ้ากดช่องที่ผ่านแล้ว ให้ตัวละครเดินไปยืนฟรีๆ แล้วจบการทำงานเลย
     if (node.cleared) {
       this.currentNodeId = node.id;
       this.persist();
@@ -490,6 +490,7 @@ selectNode(nodeId) {
       return;
     }
     if (node.type === NodeType.EVENT) {
+      // เปลี่ยนจากแจกทอง เป็นแจกวัตถุดิบ (Materials)
       const mats = 1 + Math.floor(Math.random() * 2);
       addMaterial(this.player, zone.index, mats);
       this.lastResult = { kind: 'event_mat', mats, zoneIndex: zone.index };
@@ -663,7 +664,7 @@ selectNode(nodeId) {
       }
     }
 
-let lordSlain = false;
+    let lordSlain = false;
     if (node.type === NodeType.LORD) {
       zone.lordDefeated = true;
       lordSlain = true;
@@ -1691,11 +1692,8 @@ let lordSlain = false;
         <p class="reward-line">${t('campfire.healed', { n: r.heal })}</p>
         <button class="btn btn-primary" data-action="continue-node">${t('result.continue')}</button>`;
     }
-    return `
-      <h2>${t('event.title')}</h2>
-      <p class="reward-line">${t('gold.drop', { n: r.gold })}</p>
-      <button class="btn btn-primary" data-action="continue-node">${t('result.continue')}</button>
-    `;
+    
+    // 👇 จัดการ Event แจกวัตถุดิบ ตรงนี้!
     if (r.kind === 'event_mat') {
       return `
         <h2>${t('event.title')}</h2>
@@ -1703,6 +1701,11 @@ let lordSlain = false;
         <button class="btn btn-primary" data-action="continue-node">${t('result.continue')}</button>
       `;
     }
+    
+    return `
+      <h2>${t('event.title')}</h2>
+      <button class="btn btn-primary" data-action="continue-node">${t('result.continue')}</button>
+    `;
   }
 
   renderAltarScreen() {

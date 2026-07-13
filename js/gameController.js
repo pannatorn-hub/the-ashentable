@@ -99,6 +99,8 @@ const NODE_REWARDS = {
 const CAMPFIRE_HEAL_PCT = 0.6;
 const DEFEAT_HP_PCT = 0.4;
 const EVENT_GOLD = [20, 55];
+// v8: which authored region's town hosts the Hidden Runesmith (หุบเหวจันทร์ดับ → ค่ายขอบเหว).
+const RUNESMITH_ZONE_INDEX = 5;
 
 function randInt([min, max]) { return Math.floor(min + Math.random() * (max - min + 1)); }
 function dangerGlyphs(tier) { return '☠'.repeat(Math.min(5, 1 + Math.max(0, tier))); }
@@ -268,6 +270,8 @@ export class GameController {
       case 'smuggler-buy-heart': this.purchaseSmugglerHeart(); break;
       // v6: Hidden Unique Skill awakening banner
       case 'dismiss-awaken': this.hiddenAwakenNotice = null; this.render(); break;
+      // v8: the Runesmith strikes the anvil — passives wake permanently.
+      case 'unlock-passives': this.player.passivesUnlocked = true; this.persist(); this.goTo('town'); break;
       default: break;
     }
   }
@@ -417,7 +421,22 @@ export class GameController {
     if (firstDiscovery) expandOuterFrontier(this.world.macro, this.world, String(zoneIndex));
     ensureSmugglerPlaced(this.world.macro, this.world); // v6: this discovery may have exposed her camp
     this.persist();
+
+    // v8: the Hidden Runesmith of ค่ายขอบเหว — arriving with a dormant passive
+    // item (any visit, including paid fast travel) diverts into the awakening
+    // event instead of the town screen. Fires until the player accepts.
+    if (zoneIndex === RUNESMITH_ZONE_INDEX && !this.player.passivesUnlocked && this.playerHasPassiveItem()) {
+      this.goTo('awaken_event');
+      return;
+    }
+
     this.goTo('town');
+  }
+
+  /** v8: does the player own (equipped or bagged) at least one item with a passive? */
+  playerHasPassiveItem() {
+    return Object.values(this.player.equipment).some((i) => i && i.passive)
+      || this.player.bag.some((i) => i && i.passive);
   }
 
   continueFromTown() {
@@ -1098,6 +1117,7 @@ export class GameController {
       case 'node_result': return this.renderNodeResult();
       case 'event_result': return this.renderEventResult();
       case 'altar_event': return this.renderAltarScreen();
+      case 'awaken_event': return this.renderAwakenEvent(); // v8
       case 'pvp_searching': return this.renderSearching();
       case 'pvp_result': return this.renderPvpResult();
       case 'permadeath': return this.renderPermadeath();
@@ -1275,6 +1295,33 @@ export class GameController {
     `;
   }
 
+  /**
+   * v8: single source of truth for an item's passive line (Bag/Compare,
+   * Shop, Loot Gate). Dormant passives never reveal their name or effect —
+   * only a rumor pointing at the Runesmith's town. No inline styles; the
+   * .unlocked/.locked looks live in style.css.
+   */
+  renderItemPassiveHtml(item) {
+    if (!item || !item.passive) return '';
+    if (this.player && this.player.passivesUnlocked) {
+      return `<div class="item-passive unlocked">✦ ${passiveName(item.passive)}: ${passiveDesc(item.passive)}</div>`;
+    }
+    return `<div class="item-passive locked">${t('passive.dormant', { town: townName(RUNESMITH_ZONE_INDEX) })}</div>`;
+  }
+
+  /** v8: the Hidden Runesmith awakening event (diverted-to from arriveTown). */
+  renderAwakenEvent() {
+    return `
+      <div class="event-card npc-panel runesmith-card">
+        <h2>${t('runesmith.title')}</h2>
+        <p class="npc-lore">${t('runesmith.lore')}</p>
+        <div class="menu-actions">
+          <button class="btn btn-primary" data-action="unlock-passives">${t('runesmith.confirm')}</button>
+        </div>
+      </div>
+    `;
+  }
+
   renderShop() {
     const stock = this.shopStock || [];
     const bagFull = this.player.bag.length >= bagCapacity(this.player);
@@ -1285,7 +1332,7 @@ export class GameController {
           <div class="item-chip" style="border-color:${e.item.rarity.color}">
             <div class="item-name" style="color:${e.item.rarity.color}">${e.item.name}</div>
             <div class="item-mods">${Object.entries(e.item.statMods).map(([k, v]) => `+${v} ${t(`stat.${k}`)}`).join(' · ')}</div>
-            ${e.item.passive ? `<div class="item-passive">${passiveName(e.item.passive)}: ${passiveDesc(e.item.passive)}</div>` : ''}
+            ${this.renderItemPassiveHtml(e.item)}
             <button class="btn btn-tiny btn-primary" data-action="buy" data-index="${i}" ${this.player.gold < e.price || bagFull ? 'disabled' : ''}>
               ${t('shop.buy', { n: e.price })}${bagFull ? ` — ${t('shop.bagFull')}` : this.player.gold < e.price ? ` — ${t('shop.noGold')}` : ''}
             </button>
@@ -1434,12 +1481,12 @@ export class GameController {
           <div class="compare-grid">
             <div class="compare-col">
               <div class="compare-head" style="color:${selected.rarity.color}">${t('compare.new')}: ${selected.name}</div>
-              ${selected.passive ? `<div class="item-passive">${passiveName(selected.passive)}</div>` : ''}
+              ${this.renderItemPassiveHtml(selected)}
               ${selected.curse ? `<div class="item-curse">⚠ ${curseName(selected.curse)}: ${curseDesc(selected.curse)}</div>` : ''}
             </div>
             <div class="compare-col">
               <div class="compare-head" style="color:${equipped ? equipped.rarity.color : 'var(--parchment-dim)'}">${t('compare.current')}: ${equipped ? equipped.name : t('compare.none')}</div>
-              ${equipped && equipped.passive ? `<div class="item-passive">${passiveName(equipped.passive)}</div>` : ''}
+              ${equipped ? this.renderItemPassiveHtml(equipped) : ''}
               ${equipped && equipped.curse ? `<div class="item-curse">⚠ ${curseName(equipped.curse)}: ${curseDesc(equipped.curse)}</div>` : ''}
             </div>
           </div>
@@ -1638,7 +1685,7 @@ export class GameController {
           <div class="item-chip ${item.curse ? 'cursed-item' : ''}" style="border-color:${item.rarity.color}">
             <div class="item-name" style="color:${item.rarity.color}">${item.name} <span class="legend-note">(${t(`slot.${item.slot}`)})</span></div>
             <div class="item-mods">${Object.entries(item.statMods).map(([k, v]) => `+${v} ${t(`stat.${k}`)}`).join(' · ')}</div>
-            ${item.passive ? `<div class="item-passive">${passiveName(item.passive)}: ${passiveDesc(item.passive)}</div>` : ''}
+            ${this.renderItemPassiveHtml(item)}
             ${item.curse ? `<div class="item-curse">⚠ ${curseName(item.curse)}: ${curseDesc(item.curse)}</div>` : ''}
           </div>
           <table class="compare-table">

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>โต๊ะเถ้าธุลี (The Ashen Table) — Rogue-lite PvE &amp; PvP Permadeath Arena</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/animations.css" /><!-- v7: combat cue library -->
+
+</head>
+<body>
+
+  <!-- 2.5D parallax background: each layer moves at a different speed
+       based on its data-depth, driven by js/parallax.js -->
+  <div class="parallax-scene" aria-hidden="true">
+    <div class="parallax-layer layer-sky" data-depth="0.04" data-drift="true"></div>
+    <div class="parallax-layer layer-moon" data-depth="0.08"></div>
+    <div class="parallax-layer layer-mountains-far" data-depth="0.15"></div>
+    <div class="parallax-layer layer-mountains-near" data-depth="0.3"></div>
+    <div class="parallax-layer layer-mist" data-depth="0.45" data-drift="true"></div>
+  </div>
+
+  <!-- Game mounts here; main.js shows the auth gate first, then hands off
+       to gameController.js which owns everything inside #app after that -->
+  <div id="app"></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

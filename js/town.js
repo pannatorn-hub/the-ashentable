@@ -18,7 +18,16 @@ export function buyPrice(item, playerLevel, markup = 1) {
   return Math.round((salvageValue(item) * 6 + playerLevel * 2) * markup);
 }
 
-export function sellPrice(item) { return salvageValue(item); }
+export function sellPrice(item, zoneIndex) { 
+  const basePrice = salvageValue(item); 
+  
+  // กิมมิค: ถ้าเป็นเมืองที่ 4 (เขตของมารา) จะรับซื้อของแพงกว่าปกติ 2 เท่า!
+  if (zoneIndex === 4) {
+    return basePrice * 2;
+  }
+  
+  return basePrice; 
+}
 
 /**
  * Generates a town's shop stock. The zone-4 town (มารา's post) sells her
@@ -45,7 +54,6 @@ export function travelCost(destination) {
   return 30 + destination.zoneIndex * 20;
 }
 
-/** All destinations reachable by candle-warp: the Capital + every discovered town (minus where you stand). */
 /** All destinations reachable by candle-warp: the Capital + every discovered town (minus where you stand). */
 export function travelDestinations(world, from) {
   const dests = [];

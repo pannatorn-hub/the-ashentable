@@ -141,29 +141,18 @@ const COMBAT_TYPES = new Set([NodeType.NORMAL, NodeType.HARD, NodeType.ELITE, No
  * `opts.outer` / `opts.biomeKey` mark a procedural post-Capital region.
  */
 export function generateMicroZone(zoneIndex, dangerTier, opts = {}) {
-  const exits = opts.exits || [];
-  const lordCount = Math.max(1, exits.length); // เสกบอสตามจำนวนทางออก
-
-  // ปรับความกว้างของชั้นสุดท้าย (บอส) ให้เท่ากับจำนวนทางออกพอดี
-  const DEPTH_WIDTHS_DYN = [2, 3, 3, 1, 2, 3, 2, lordCount];
-
   const floors = [];
-  for (let d = 0; d < DEPTH_WIDTHS_DYN.length; d += 1) {
-    const width = DEPTH_WIDTHS_DYN[d];
+  for (let d = 0; d < DEPTH_WIDTHS.length; d += 1) {
+    const width = DEPTH_WIDTHS[d];
     const floor = [];
     for (let i = 0; i < width; i += 1) {
       let type;
       if (d === TOWN_DEPTH) type = NodeType.TOWN;
-      else if (d === DEPTH_WIDTHS_DYN.length - 1) type = NodeType.LORD;
+      else if (d === DEPTH_WIDTHS.length - 1) type = NodeType.LORD;
       else type = rollFieldNodeType(d);
-      
       const node = { id: nextNodeId(), depth: d, index: i, type, cleared: false, connectsTo: [], capitalGate: false, hazard: null };
-      
-      // 👇 ฝังข้อมูลเป้าหมายเส้นทางแผนที่โลกลงไปในตัวบอสแต่ละตัว
-      if (type === NodeType.LORD && exits[i]) {
-        node.macroTarget = exits[i];
-      }
-
+      // v6: stamp environmental hazards onto combat nodes (Lords included —
+      // a Blood-Moon Lord is exactly the kind of story this game wants).
       if (COMBAT_TYPES.has(type) && Math.random() < hazardChance(dangerTier, d)) {
         node.hazard = HAZARD_KEYS[Math.floor(Math.random() * HAZARD_KEYS.length)];
       }
@@ -171,8 +160,6 @@ export function generateMicroZone(zoneIndex, dangerTier, opts = {}) {
     }
     floors.push(floor);
   }
-
-  // ... (โค้ดช่วงแคมป์ไฟและลูปการเชื่อมต่อเส้นทางด้านล่าง ปล่อยไว้เหมือนเดิมครับ) ...
 
   // Guarantee one campfire shallow (depth 2) and one deep (depth 5) —
   // persistent HP needs breathing room on both sides of the town.
@@ -223,16 +210,7 @@ export function getAvailableNodeIds(zone, currentNodeId) {
   if (!currentNodeId) return new Set(zone.entranceIds);
   const current = findNode(zone, currentNodeId);
   if (!current) return new Set(zone.entranceIds);
-
-  const available = new Set(current.connectsTo);
-
-  // 👇 เพิ่มลอจิกเดินถอยหลัง: หาช่องทั้งหมดที่มีเส้นทางชี้มาที่ช่องปัจจุบัน
-  for (const n of zone.floors.flat()) {
-    if (n.connectsTo.includes(currentNodeId)) {
-      available.add(n.id);
-    }
-  }
-  return available;
+  return new Set(current.connectsTo);
 }
 
 /**
@@ -266,10 +244,7 @@ export function computeVisibleNodeIds(zone, currentNodeId, visionRange = 1) {
 /** Respawn an expedition: enemies return; town discovery, Lord kills, and gates stay known. */
 export function respawnZone(zone) {
   for (const n of zone.floors.flat()) {
-    // 👇 ถ้าระบุว่าบอสตัวไหนตายไปแล้ว (เส้นทางนั้นปลดล็อกแล้ว) บอสตัวนั้นจะไม่เกิดใหม่
-    if (n.type === NodeType.LORD && zone.defeatedLords && zone.defeatedLords.includes(n.macroTarget)) continue;
-    // Fallback กรณีบอสปกติหรือเซฟเก่า
-    if (n.type === NodeType.LORD && !n.macroTarget && zone.lordDefeated) continue;
+    if (n.type === NodeType.LORD && zone.lordDefeated) continue;
     n.cleared = false;
   }
 }
@@ -365,8 +340,7 @@ export function cursedDropChanceFor(node, zone) {
 // ---------------- Economy drops ----------------
 
 export function goldDropFor(node, zone, won) {
-  // มอนสเตอร์ไม่พกเงินสด! เงินหาได้จากการขายของให้ NPC เท่านั้น
-  return 0;
+  return 0; // v7: มอนสเตอร์ไม่ดรอปเงินอีกต่อไป ต้องหาเงินจากการขายของให้ NPC เท่านั้น
 }
 
 /** Zone material drops: chance on a normal win, guaranteed and larger for elites and the Lord. */

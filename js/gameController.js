@@ -62,7 +62,7 @@ import { Matchmaker } from './matchmaking.js';
 import { startBattle, playerAct, patternedBotPicker, SkillType, SKILL_LIBRARY, skillName, skillDesc, getEffectiveStats, SIG_GAUGE_MAX } from './combat.js';
 import {
   generateWorld, findMacroNode, getAvailableMacroNodeIds, markHubVisited, expandOuterFrontier, MacroKind,
-  ensureSmugglerPlaced, triggerSmugglerEncounter,
+  ensureSmugglerPlaced, triggerSmugglerEncounter, migrateWorldBossGating,
 } from './world-map.js';
 import {
   findNode, getAvailableNodeIds, computeVisibleNodeIds, respawnZone, hydrateOuterZoneRegistry,
@@ -70,6 +70,7 @@ import {
   zoneName, zoneLore, townName, materialName,
   rollCampfireAmbush, generateAmbushEnemy, cursedDropChanceFor,
   hazardName, hazardDesc, hazardIcon, HAZARD_SIGHT_VISION,
+  effectiveNodeType, isLiveBossNode,
 } from './zone-map.js';
 import {
   generateLoot, salvageValue, passiveName, passiveDesc,
@@ -142,18 +143,31 @@ export class GameController {
       // v6: places the Wandering Smuggler fresh, or migrates a v5 save
       // that predates her (macro.smugglerNodeId is simply undefined then).
       ensureSmugglerPlaced(this.world.macro, this.world);
+      // v9: repair pre-v9 boss bookkeeping so old saves aren't soft-locked.
+      migrateWorldBossGating(this.world);
     }
 
     // Where the player stands:
     //   { kind: 'hub', hubId: 'start' | 'capital' } | { kind: 'field'|'town', zoneIndex }
+    // v9 PERSISTENT RUN STATE: position and checkpoint now survive a reload.
+    // Before v9 the save held player + world only, so every reload silently
+    // teleported the player back to the hub and respawned the region.
     const homeHubId = (this.world && this.world.macro.nodes.capital.visited) ? 'capital' : 'start';
-    this.place = { kind: 'hub', hubId: homeHubId };
-    this.currentZoneIndex = null;
-    this.currentNodeId = null;
+    const run = savedState?.run || null;
+    this.place = run?.place || { kind: 'hub', hubId: homeHubId };
+    this.currentZoneIndex = run?.currentZoneIndex ?? null;
+    this.currentNodeId = run?.currentNodeId ?? null;
+    // The last safe ground the player stood on: where defeat sends them back to.
+    this.checkpoint = run?.checkpoint || { kind: 'hub', hubId: homeHubId };
+    if (this.place.kind === 'field' && this.currentZoneIndex === null) {
+      this.place = { kind: 'hub', hubId: homeHubId }; // corrupt/partial run block — fail safe, never throw
+    }
 
     this.selectedClassId = null;
-    this.screen = this.player ? 'capital' : 'create_character';
-    if (this.player) this.player.hp = this.player.getStats().maxHp; // wakes rested at the hub
+    this.screen = this.player ? this.placeScreen() : 'create_character';
+    // v9: only sanctuaries heal you. Reloading mid-expedition no longer works
+    // as a free full-heal exploit — HP persists exactly as the save left it.
+    if (this.player && this.place.kind !== 'field') this.player.hp = this.player.getStats().maxHp;
 
     this.battleState = null;
     this.activeNode = null;
@@ -171,6 +185,7 @@ export class GameController {
     this.renameSuccess = null;
     this.renameDraft = '';
     this.linkStatus = null;     // null | 'working' | 'error' — Settings' Link Account flow
+    this.saveError = null;      // v9: last save failure, surfaced in the HUD instead of swallowed
 
     // v6:
     this.smugglerStock = null;      // the current Wandering Smuggler encounter's offer
@@ -191,10 +206,24 @@ export class GameController {
     this.player.maxCP = Math.max(this.player.maxCP || 0, this.player.combatPower);
     const state = {
       player: this.player.toJSON(),
-      world: this.world,
+      world: this.world,            // boss kills + unlocked roads live in here
       legacy: this.legacyManager.toJSON(),
+      run: {                        // v9: where you are, and where you respawn
+        place: this.place,
+        currentZoneIndex: this.currentZoneIndex,
+        currentNodeId: this.currentNodeId,
+        checkpoint: this.checkpoint,
+      },
+      savedAt: Date.now(),
     };
-    Promise.resolve(this.saveFn(this.user.id, state)).catch((err) => console.error('save failed', err));
+    // v9: a failed write used to vanish into console.error — which looks
+    // EXACTLY like "my progress reset" on the next reload. Now it's visible.
+    Promise.resolve(this.saveFn(this.user.id, state))
+      .then(() => { if (this.saveError) { this.saveError = null; this.render(); } })
+      .catch((err) => {
+        console.error('save failed', err);
+        if (!this.saveError) { this.saveError = err.message || String(err); this.render(); }
+      });
     if (this.leaderboard) {
       Promise.resolve(this.leaderboard.submit({
         userId: this.user.id, name: this.player.name, classId: this.player.classId,
@@ -255,6 +284,7 @@ export class GameController {
       case 'altar-yes': this.resolveAltar(true); break;
       case 'altar-no': this.resolveAltar(false); break;
       case 'continue-node': this.finishNodeResult(); break;
+      case 'advance-next': this.advanceToMacroNode(a.macro); break; // v9: post-boss "walk on" choice
       case 'goto-leaderboard': this.openLeaderboard(); break;
       case 'lb-sort': this.lbSortBy = a.by; this.openLeaderboard(); break;
       case 'lb-back': this.goTo('capital'); break;
@@ -333,6 +363,7 @@ export class GameController {
     this.place = { kind: 'hub', hubId };
     this.currentZoneIndex = null;
     this.currentNodeId = null;
+    this.checkpoint = { kind: 'hub', hubId }; // v9: hubs are checkpoints
     this.player.hp = this.player.getStats().maxHp; // sanctuary: full heal
     this.shopStock = null;
     this.persist();
@@ -412,6 +443,7 @@ export class GameController {
     this.place = { kind: 'town', zoneIndex };
     this.currentZoneIndex = zoneIndex;
     this.currentNodeId = zone.townNodeId;
+    this.checkpoint = { kind: 'town', zoneIndex }; // v9: reaching a town moves your respawn point
     const townNode = findNode(zone, zone.townNodeId);
     if (townNode) townNode.cleared = true;
     this.player.hp = this.player.getStats().maxHp; // sanctuary: full heal
@@ -445,23 +477,47 @@ export class GameController {
     this.goTo('zone');
   }
 
+  /**
+   * v9 CHECKPOINT RESPAWN. Death sends you back to `this.checkpoint` — the
+   * last town or hub you actually stood in — NOT to the Start Village.
+   * So: push into a fresh region past the boss, die before finding its town,
+   * and you wake at the PREVIOUS town, with that new region respawned and
+   * its road still unlocked (the boss stays dead).
+   *
+   * A checkpoint town that somehow no longer qualifies (never discovered —
+   * only possible via a hand-edited save) degrades to the nearest hub
+   * instead of throwing.
+   */
   returnToSanctuary() {
     this.ambushNode = null; // v6: a lost ambush fight still ends the ambush state
-    // Defeat: the darkness spits you out at the nearest refuge.
     const zone = this.currentZone();
-    const toTown = zone && zone.townDiscovered;
-    if (zone) respawnZone(zone);
-    const hubId = zone && zone.outer ? 'capital' : this.world.macro.startId;
-    const placeName = toTown ? townName(zone.index) : (hubId === 'capital' ? t('capital.name') : t('world.hub.start.name'));
-    this.lastResult = { kind: 'defeat_return', placeName, toTown, zoneIndex: zone ? zone.index : null };
-    if (toTown) {
-      this.place = { kind: 'town', zoneIndex: zone.index };
-      this.currentNodeId = zone.townNodeId;
+    if (zone) respawnZone(zone); // the region you fell in refills — bosses you already killed stay dead
+
+    let cp = this.checkpoint;
+    const cpZone = cp && cp.kind === 'town' ? this.world.zones[cp.zoneIndex] : null;
+    if (cp?.kind === 'town' && !(cpZone && cpZone.townDiscovered)) cp = null;
+    if (!cp) {
+      const hubId = zone && zone.outer ? 'capital' : this.world.macro.startId;
+      cp = { kind: 'hub', hubId };
+    }
+
+    if (cp.kind === 'town') {
+      const home = this.world.zones[cp.zoneIndex];
+      respawnZone(home);
+      this.place = { kind: 'town', zoneIndex: cp.zoneIndex };
+      this.currentZoneIndex = cp.zoneIndex;
+      this.currentNodeId = home.townNodeId;
+      const townNode = findNode(home, home.townNodeId);
+      if (townNode) townNode.cleared = true;
+      this.lastResult = { kind: 'defeat_return', placeName: townName(cp.zoneIndex), toTown: true, zoneIndex: cp.zoneIndex };
     } else {
-      this.place = { kind: 'hub', hubId };
+      this.place = { kind: 'hub', hubId: cp.hubId };
       this.currentZoneIndex = null;
       this.currentNodeId = null;
+      const placeName = cp.hubId === 'capital' ? t('capital.name') : t('world.hub.start.name');
+      this.lastResult = { kind: 'defeat_return', placeName, toTown: false, zoneIndex: null };
     }
+    this.checkpoint = cp;
     this.player.hp = Math.max(1, Math.round(this.player.getStats().maxHp * DEFEAT_HP_PCT));
     this.persist();
   }
@@ -518,10 +574,15 @@ export class GameController {
       return;
     }
 
-    // Combat node — persistent HP: no free heal on entering a fight. v6: pass this node's environmental hazard, if any.
-    const enemy = generateEnemyForNode(node, zone, this.player.level);
-    const favored = node.type === NodeType.LORD ? SkillType.HEAVY_ATTACK : SkillType.QUICK_STRIKE;
-    this.battleState = startBattle(this.player, enemy, patternedBotPicker(favored, node.type === NodeType.LORD ? 0.5 : 0.4), { fullHeal: false, hazard: node.hazard || null });
+    // Combat node — persistent HP: no free heal on entering a fight.
+    // v9: a Lord node whose boss is already dead fights as an ORDINARY node —
+    // normal mob, normal difficulty, normal rewards. `fightNode` carries the
+    // effective type so enemy generation and drops both see it that way.
+    const fightNode = { ...node, type: effectiveNodeType(node) };
+    const isBoss = isLiveBossNode(node);
+    const enemy = generateEnemyForNode(fightNode, zone, this.player.level);
+    const favored = isBoss ? SkillType.HEAVY_ATTACK : SkillType.QUICK_STRIKE;
+    this.battleState = startBattle(this.player, enemy, patternedBotPicker(favored, isBoss ? 0.5 : 0.4), { fullHeal: false, hazard: node.hazard || null });
     this.pvpMode = false;
     this.goTo('battle');
   }
@@ -563,8 +624,9 @@ export class GameController {
 
   currentEnemyPicker() {
     if (this.pvpMode) return patternedBotPicker(SkillType.HEAVY_ATTACK, 0.5);
-    const favored = this.activeNode.type === NodeType.LORD ? SkillType.HEAVY_ATTACK : SkillType.QUICK_STRIKE;
-    return patternedBotPicker(favored, this.activeNode.type === NodeType.LORD ? 0.5 : 0.4);
+    const isBoss = isLiveBossNode(this.activeNode);
+    const favored = isBoss ? SkillType.HEAVY_ATTACK : SkillType.QUICK_STRIKE;
+    return patternedBotPicker(favored, isBoss ? 0.5 : 0.4);
   }
 
   /**
@@ -653,13 +715,17 @@ export class GameController {
     const zone = this.currentZone();
     const won = bs.winner === 'player';
     const isAmbush = !!this.ambushNode; // v6
-    const rewards = NODE_REWARDS[node.type] || NODE_REWARDS[NodeType.NORMAL];
+    // v9: re-running a slain Lord's node pays NORMAL rewards, not boss rewards.
+    const wasBossFight = isLiveBossNode(node);
+    const effType = effectiveNodeType(node);
+    const rewardNode = { ...node, type: effType };
+    const rewards = NODE_REWARDS[effType] || NODE_REWARDS[NodeType.NORMAL];
 
     const xp = won ? rewards.winXp : rewards.loseXp;
     const leveledUp = this.player.gainXp(xp);
-    const gold = goldDropFor(node, zone, won);
+    const gold = goldDropFor(rewardNode, zone, won);
     this.player.gold += gold;
-    const mats = materialDropFor(node, won);
+    const mats = materialDropFor(rewardNode, won);
     if (mats > 0) addMaterial(this.player, zone.index, mats);
 
     if (!won) {
@@ -678,22 +744,25 @@ export class GameController {
     } else {
       this.pendingLoot = generateLoot(this.player.level);
       // v6: Lords, elites, and the deep outer web can also drop something Cursed.
-      if (Math.random() < cursedDropChanceFor(node, zone)) {
+      if (Math.random() < cursedDropChanceFor(rewardNode, zone)) {
         this.pendingLoot.push(createCursedEquipment(this.randomSlot(), this.player.level));
       }
     }
 
+    // v9 BOSS KILL — the single place progression is written. All three of
+    // these live inside `world`/`player`, both of which persist() saves, so
+    // the unlock is durable by construction.
     let lordSlain = false;
-    if (node.type === NodeType.LORD) {
-      zone.lordDefeated = true;
+    let unlockedMacroId = null;
+    if (wasBossFight) {
+      node.bossSlain = true;      // (1) this Lord never respawns; his node becomes a normal one
+      zone.lordDefeated = true;   // (2) region-level flag (outer/legacy unlocking, map paint)
       lordSlain = true;
-      
-      // 👇 บันทึกว่าบอสที่เฝ้าเป้าหมายไหนถูกจัดการแล้ว
-      if (!zone.defeatedLords) zone.defeatedLords = [];
+      if (!Array.isArray(zone.defeatedLords)) zone.defeatedLords = [];
       if (node.macroTarget && !zone.defeatedLords.includes(node.macroTarget)) {
-        zone.defeatedLords.push(node.macroTarget);
+        zone.defeatedLords.push(node.macroTarget); // (3) THE unlock: this road is now open forever
       }
-      
+      unlockedMacroId = node.macroTarget || null;
       this.player.maxZone = Math.max(this.player.maxZone || 1, zone.index + 1);
     }
 
@@ -705,7 +774,11 @@ export class GameController {
     }
     this.markNodeCleared(node);
 
-    this.lastResult = { kind: 'battle', won: true, xp, gold, mats, lootMsgs: [], leveledUp, lordSlain, opponentName: bs.enemy.name, zoneIndex: zone.index, ambush: isAmbush };
+    this.lastResult = {
+      kind: 'battle', won: true, xp, gold, mats, lootMsgs: [], leveledUp, lordSlain,
+      opponentName: bs.enemy.name, zoneIndex: zone.index, ambush: isAmbush,
+      unlockedMacroId, // v9: drives the "Continue to the next land" button
+    };
     this.persist();
     this.goTo('node_result');
   }
@@ -955,7 +1028,10 @@ export class GameController {
     this.linkStatus = 'working';
     this.render();
     try {
-      const currentState = { player: this.player.toJSON(), world: this.world, legacy: this.legacyManager.toJSON() };
+      const currentState = {
+        player: this.player.toJSON(), world: this.world, legacy: this.legacyManager.toJSON(),
+        run: { place: this.place, currentZoneIndex: this.currentZoneIndex, currentNodeId: this.currentNodeId, checkpoint: this.checkpoint },
+      };
       const result = await migrateGuestToFirebase(this.user, currentState);
       this.user = result.user;
       this.auth = result.auth;
@@ -969,6 +1045,13 @@ export class GameController {
           this.world = result.state.world;
           hydrateOuterZoneRegistry(this.world);
           ensureSmugglerPlaced(this.world.macro, this.world); // v6
+          migrateWorldBossGating(this.world);                 // v9
+        }
+        if (result.state.run) {                               // v9: the winning save's position wins too
+          this.place = result.state.run.place || this.place;
+          this.currentZoneIndex = result.state.run.currentZoneIndex ?? null;
+          this.currentNodeId = result.state.run.currentNodeId ?? null;
+          this.checkpoint = result.state.run.checkpoint || this.checkpoint;
         }
         if (result.state.legacy) this.legacyManager = LegacyManager.fromJSON(result.state.legacy);
       }
@@ -992,7 +1075,8 @@ export class GameController {
     if (this.screen === 'battle' && this.battleMounted) return;
     // v6: a Hidden Unique Skill awakening banner, shown once above whatever screen is current.
     const awakenBanner = this.hiddenAwakenNotice ? this.renderAwakenBanner() : '';
-    this.root.innerHTML = `${this.screen === 'create_character' ? '' : this.renderHud()}${awakenBanner}<main class="screen">${this.renderScreen()}</main>`;
+    const saveWarn = this.saveError ? `<div class="save-warning">${t('save.failed', { err: this.saveError })}</div>` : '';
+    this.root.innerHTML = `${this.screen === 'create_character' ? '' : this.renderHud()}${saveWarn}${awakenBanner}<main class="screen">${this.renderScreen()}</main>`;
     if (this.screen === 'battle') this.mountBattle();
   }
 
@@ -1239,14 +1323,17 @@ export class GameController {
       }
       const isAvailable = available.has(node.id) && !node.cleared;
       const isCurrent = node.id === this.currentNodeId;
-      const label = node.type === NodeType.LORD ? t('node.lord') : t(`node.${node.type}`);
-      const cls = ['map-node', node.type, node.cleared ? 'cleared' : '', isAvailable ? 'available' : '', isCurrent ? 'current' : ''].join(' ');
+      // v9: a slain Lord's node renders (and fights) as an ordinary combat node.
+      const effType = effectiveNodeType(node);
+      const slainLord = node.type === NodeType.LORD && node.bossSlain;
+      const label = slainLord ? t('node.lordSlain') : t(`node.${effType}`);
+      const cls = ['map-node', effType, slainLord ? 'lord-slain' : '', node.cleared ? 'cleared' : '', isAvailable ? 'available' : '', isCurrent ? 'current' : ''].join(' ');
       // v6: hazard badge — always visible once cleared (you've already lived it), or earlier if vision is sharp enough.
       const showHazard = node.hazard && (node.cleared || canSeeHazards);
       const hazardBadge = showHazard ? `<span class="hazard-badge" title="${hazardName(node.hazard)}">${hazardIcon(node.hazard)}</span>` : '';
       const titleText = showHazard ? `${label} — ${hazardName(node.hazard)}` : label;
       return `<button class="${cls}" style="${style}" data-action="select-node" data-node="${node.id}" ${isAvailable ? '' : 'disabled'} title="${titleText}">
-        <span class="node-icon">${typeMeta[node.type]}</span>${hazardBadge}
+        <span class="node-icon">${typeMeta[effType]}</span>${hazardBadge}
       </button>`;
     }).join('');
 
@@ -1706,6 +1793,23 @@ export class GameController {
         </div>`;
     }
 
+    // v9 POST-BOSS GATE. No auto-warp anywhere: after a Lord falls, the player
+    // decides when to move on. The button only appears once every loot item
+    // has been decided (the loot gate holds the screen first).
+    let bossGate = '';
+    if (r.lordSlain && !pending.length) {
+      bossGate = `
+        <div class="boss-gate">
+          <p class="reward-line">${t('lord.roadOpen', { place: this.macroNodeLabel(r.unlockedMacroId) })}</p>
+          <div class="menu-actions">
+            ${r.unlockedMacroId
+              ? `<button class="btn btn-primary" data-action="advance-next" data-macro="${r.unlockedMacroId}">${t('lord.advance', { place: this.macroNodeLabel(r.unlockedMacroId) })}</button>`
+              : ''}
+            <button class="btn btn-secondary" data-action="continue-node">${t('lord.stay')}</button>
+          </div>
+        </div>`;
+    }
+
     return `
       <h2>${t('result.win')}</h2>
       <p>${t('result.win.body', { name: r.opponentName })}</p>
@@ -1715,8 +1819,35 @@ export class GameController {
       ${r.lordSlain ? `<p class="reward-line">${t('lord.slain', { zone: zoneName(r.zoneIndex) })}</p>` : ''}
       ${lootGate}
       <div class="loot-list">${decidedHtml}</div>
-      ${pending.length ? '' : `<button class="btn btn-primary" data-action="continue-node">${t('result.continue')}</button>`}
+      ${bossGate}
+      ${pending.length || r.lordSlain ? '' : `<button class="btn btn-primary" data-action="continue-node">${t('result.continue')}</button>`}
     `;
+  }
+
+  /** v9: human-readable name of a macro node id (region, Capital, or Start Village). */
+  macroNodeLabel(macroId) {
+    if (!macroId) return t('world.unknownRoad');
+    if (macroId === 'capital') return t('capital.name');
+    if (macroId === this.world.macro.startId) return t('world.hub.start.name');
+    const node = findMacroNode(this.world.macro, macroId);
+    if (!node || node.zoneIndex === undefined) return t('world.unknownRoad');
+    const zone = this.world.zones[node.zoneIndex];
+    // Fog of war is sacred: an undiscovered land is never named on the button.
+    return (zone && zone.townDiscovered) ? zoneName(node.zoneIndex) : t('zone.unknown');
+  }
+
+  /**
+   * v9: the player CHOOSES to walk the road their kill opened. This is the
+   * only place a boss victory leads anywhere new — nothing auto-warps.
+   */
+  advanceToMacroNode(macroId) {
+    const available = getAvailableMacroNodeIds(this.world.macro, this.world, this.currentMacroId());
+    if (!available.has(macroId)) { this.goTo('zone'); return; } // stale button — fail closed
+    const node = findMacroNode(this.world.macro, macroId);
+    if (!node) { this.goTo('zone'); return; }
+    this.pendingLoot = null;
+    if (node.kind === MacroKind.HUB) { this.arriveHub(node.id, true); return; }
+    this.enterZone(node.zoneIndex); // checkpoint stays at the last town — die here and you wake there
   }
 
   renderEventResult() {

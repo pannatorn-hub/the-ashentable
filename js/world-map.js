@@ -26,7 +26,7 @@
 // you're inside a single region. Zero DOM dependencies.
 // ---------------------------------------------------------------------------
 
-import { generateMicroZone, registerOuterZoneMeta } from './zone-map.js';
+import { generateMicroZone, registerOuterZoneMeta, migrateBossGating } from './zone-map.js';
 
 export const MacroKind = Object.freeze({ HUB: 'hub', ZONE: 'zone' });
 export const ZONE_COUNT = 10; // the 10 hand-authored regions of the pre-Capital web
@@ -109,6 +109,23 @@ export function generateWorld() {
 
 export function findMacroNode(macro, id) { return macro.nodes[id] || null; }
 
+/**
+ * v9 SAVE MIGRATION (call once at boot, after the world is loaded).
+ * Walks every region and repairs pre-v9 boss bookkeeping so old saves can
+ * still open the roads their Lords already died for. Returns true if any
+ * region was migrated.
+ */
+export function migrateWorldBossGating(world) {
+  let touched = false;
+  for (const zone of world.zones) {
+    if (!zone) continue;
+    const macroNode = world.macro.nodes[String(zone.index)];
+    const children = macroNode ? macroNode.connectsTo : [];
+    if (migrateBossGating(zone, children)) touched = true;
+  }
+  return touched;
+}
+
 /** Has this node been secured enough that its onward paths exist to walk? */
 function isFootholdSecured(node, world) {
   if (!node) return false;
@@ -129,12 +146,15 @@ export function getAvailableMacroNodeIds(macro, world, currentMacroId) {
     // 👇 อนุญาตให้วาปแผนที่โลกไปต่อได้ ก็ต่อเมื่อสู้ชนะบอสที่เฝ้าเส้นทางนั้นไว้แล้วเท่านั้น
     const zone = world.zones[node.zoneIndex];
     if (zone) {
-      if (zone.outer && zone.lordDefeated) {
-        // แผนที่ด่านลึก (Outer Zones) ชนะบอสตัวเดียวปลดล็อกทุกทาง
+      // v9 UNLOCK RULE — a road opens only when the Lord guarding it is dead.
+      //   outer / legacy-migrated regions: one Lord guards them all.
+      //   authored regions: 1 Lord : 1 road (node.macroTarget).
+      // `defeatedLords` lives inside `world`, which is what persist() saves —
+      // so an unlock survives reload by construction.
+      if ((zone.outer || zone.legacyBossGating) && zone.lordDefeated) {
         node.connectsTo.forEach((id) => available.add(id));
-      } else if (zone.defeatedLords) {
-        // แผนที่เนื้อเรื่องหลัก มีบอสเฝ้าทางแยกแบบ 1-ต่อ-1
-        zone.defeatedLords.forEach((id) => available.add(id));
+      } else if (Array.isArray(zone.defeatedLords)) {
+        zone.defeatedLords.forEach((id) => { if (node.connectsTo.includes(id)) available.add(id); });
       }
     }
   }

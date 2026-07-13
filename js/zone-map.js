@@ -286,8 +286,7 @@ export function generateEnemyForNode(node, zone, playerLevel) {
     stats: {
       atk: Math.round(9 * scale * wobble()),
       def: Math.round(6 * scale * wobble()),
-        // ถ้าเป็นบอสและอยู่แมพแรก (zone 0) ให้คูณ 0.6 เพื่อลดเลือดลง 40%
-      maxHp: Math.round(55 * scale * wobble() * (isLord && zone.index === 0 ? 0.6 : 1)),
+      maxHp: Math.round(50 * scale * wobble()),
       speed: Math.round(8 * (isLord ? 1.15 : 1) * wobble()),
       dodge: Math.round(4 + (isLord ? 6 : node.type === NodeType.ELITE ? 4 : 0)),
       accuracy: Math.round(3 + zone.dangerTier * 1.5 + node.depth),

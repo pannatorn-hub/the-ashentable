@@ -141,16 +141,31 @@ const COMBAT_TYPES = new Set([NodeType.NORMAL, NodeType.HARD, NodeType.ELITE, No
  * `opts.outer` / `opts.biomeKey` mark a procedural post-Capital region.
  */
 export function generateMicroZone(zoneIndex, dangerTier, opts = {}) {
+  // v9: the Lord floor gets ONE boss per macro exit this region owns — each
+  // Lord physically guards one road out. `opts.exits` are macro node ids
+  // (world-map.js passes them). Outer regions pass none: they keep a single
+  // Lord whose death opens every road (that's what `outer` unlocking means).
+  const exits = Array.isArray(opts.exits) ? opts.exits.slice() : [];
+  const LORD_DEPTH = DEPTH_WIDTHS.length - 1;
+  const lordCount = Math.max(1, exits.length);
+
   const floors = [];
   for (let d = 0; d < DEPTH_WIDTHS.length; d += 1) {
-    const width = DEPTH_WIDTHS[d];
+    const width = d === LORD_DEPTH ? lordCount : DEPTH_WIDTHS[d];
     const floor = [];
     for (let i = 0; i < width; i += 1) {
       let type;
       if (d === TOWN_DEPTH) type = NodeType.TOWN;
-      else if (d === DEPTH_WIDTHS.length - 1) type = NodeType.LORD;
+      else if (d === LORD_DEPTH) type = NodeType.LORD;
       else type = rollFieldNodeType(d);
       const node = { id: nextNodeId(), depth: d, index: i, type, cleared: false, connectsTo: [], capitalGate: false, hazard: null };
+      // v9: which macro road this Lord blocks, and whether he's already dead.
+      // A slain Lord's node survives — it just stops being a boss (see
+      // effectiveNodeType) and repopulates with ordinary mobs.
+      if (d === LORD_DEPTH) {
+        node.macroTarget = exits[i] || null;
+        node.bossSlain = false;
+      }
       // v6: stamp environmental hazards onto combat nodes (Lords included —
       // a Blood-Moon Lord is exactly the kind of story this game wants).
       if (COMBAT_TYPES.has(type) && Math.random() < hazardChance(dangerTier, d)) {
@@ -197,8 +212,51 @@ export function generateMicroZone(zoneIndex, dangerTier, opts = {}) {
     townNodeId: floors[TOWN_DEPTH][0].id,
     lordNodeId: floors[DEPTH_WIDTHS.length - 1][0].id,
     townDiscovered: false,
-    lordDefeated: false,
+    lordDefeated: false,        // ANY Lord of this region has fallen (outer regions unlock on this)
+    exits,                      // v9: macro roads out of this region, in Lord-node order
+    defeatedLords: [],          // v9: macro ids whose guardian Lord is dead — THE unlock flags
+    legacyBossGating: false,    // v9: true only for pre-v9 saves migrated in (see migrateBossGating)
   };
+}
+
+// ---------------- v9: Boss state ----------------
+
+/** A Lord node whose boss is dead behaves as an ordinary combat node forever after. */
+export function effectiveNodeType(node) {
+  if (!node) return null;
+  if (node.type === NodeType.LORD && node.bossSlain) return NodeType.NORMAL;
+  return node.type;
+}
+
+/** True only for a Lord that is still alive — i.e. a real boss fight. */
+export function isLiveBossNode(node) {
+  return !!node && node.type === NodeType.LORD && !node.bossSlain;
+}
+
+/** Every still-living Lord in this region. */
+export function liveBossNodes(zone) {
+  return zone.floors.flat().filter(isLiveBossNode);
+}
+
+/**
+ * v9 SAVE MIGRATION. Pre-v9 zones have a single Lord with no `macroTarget`,
+ * so `defeatedLords` could never fill and the macro roads out could never
+ * open. Rather than regenerate the world (which would wipe exploration), we
+ * flag the region as legacy-gated: its already-dead Lord unlocks every road,
+ * exactly like an outer region. New regions are unaffected.
+ */
+export function migrateBossGating(zone, macroChildren = []) {
+  if (!Array.isArray(zone.defeatedLords)) zone.defeatedLords = [];
+  if (!Array.isArray(zone.exits)) zone.exits = macroChildren.slice();
+  const lords = zone.floors.flat().filter((n) => n.type === NodeType.LORD);
+  const needsMigration = lords.some((n) => n.macroTarget === undefined);
+  if (!needsMigration) return false;
+  for (const n of lords) {
+    if (n.macroTarget === undefined) n.macroTarget = null;
+    if (n.bossSlain === undefined) n.bossSlain = !!(zone.lordDefeated && n.cleared);
+  }
+  zone.legacyBossGating = true;
+  return true;
 }
 
 export function findNode(zone, nodeId) {
@@ -244,7 +302,10 @@ export function computeVisibleNodeIds(zone, currentNodeId, visionRange = 1) {
 /** Respawn an expedition: enemies return; town discovery, Lord kills, and gates stay known. */
 export function respawnZone(zone) {
   for (const n of zone.floors.flat()) {
-    if (n.type === NodeType.LORD && zone.lordDefeated) continue;
+    // v9: a slain Lord does NOT come back. His node reopens (cleared = false)
+    // so the player can walk it again, but `bossSlain` makes it an ordinary
+    // combat node from now on — normal mobs, normal rewards, no boss fight.
+    // A Lord who is still alive also reopens: he was never beaten.
     n.cleared = false;
   }
 }
@@ -272,9 +333,7 @@ export function dangerMultiplier(dangerTier) {
 const TIER_MULT = { [NodeType.NORMAL]: 1, [NodeType.HARD]: 1.3, [NodeType.ELITE]: 1.7, [NodeType.LORD]: 2.3 };
 
 export function generateEnemyForNode(node, zone, playerLevel) {
-  // เติม * 0.5 ต่อท้ายเข้าไปเพื่อลดสเกลความเก่งของมอนสเตอร์ทุกตัวลง 50%
-  const scale = ((TIER_MULT[node.type] || 1) * dangerMultiplier(zone.dangerTier) * depthMultiplier(node.depth) * (1 + (playerLevel - 1) * 0.06)) * 0.5;
-  
+  const scale = (TIER_MULT[node.type] || 1) * dangerMultiplier(zone.dangerTier) * depthMultiplier(node.depth) * (1 + (playerLevel - 1) * 0.06);
   const wobble = () => 0.85 + Math.random() * 0.3;
   const isLord = node.type === NodeType.LORD;
 
@@ -288,7 +347,7 @@ export function generateEnemyForNode(node, zone, playerLevel) {
     stats: {
       atk: Math.round(9 * scale * wobble()),
       def: Math.round(6 * scale * wobble()),
-      maxHp: Math.round(50 * scale * wobble()), // เลือดจะโดนหั่นครึ่งตามสเกลอัตโนมัติ
+      maxHp: Math.round(50 * scale * wobble()),
       speed: Math.round(8 * (isLord ? 1.15 : 1) * wobble()),
       dodge: Math.round(4 + (isLord ? 6 : node.type === NodeType.ELITE ? 4 : 0)),
       accuracy: Math.round(3 + zone.dangerTier * 1.5 + node.depth),

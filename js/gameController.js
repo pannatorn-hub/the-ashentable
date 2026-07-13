@@ -449,15 +449,25 @@ export class GameController {
 
   // ---------------- Zone / node selection (micro layer) ----------------
 
-  selectNode(nodeId) {
+selectNode(nodeId) {
     const zone = this.currentZone();
     const node = findNode(zone, nodeId);
     if (!node) return;
     const available = getAvailableNodeIds(zone, this.currentNodeId);
     const visible = computeVisibleNodeIds(zone, this.currentNodeId, this.player.visionRange);
-    if (!available.has(nodeId) || !visible.has(nodeId) || node.cleared) return;
+    
+    // 👇 เอาเงื่อนไข 'node.cleared' ตรงบรรทัดนี้ออกไป เพื่อให้กดช่องเก่าได้
+    if (!available.has(nodeId) || !visible.has(nodeId)) return;
 
     this.activeNode = node;
+
+    // 👇 ถ้าช่องนั้นเคลียร์แล้ว (มอนสเตอร์ตายแล้ว) ให้ตัวละครเดินไปยืนช่องนั้นฟรีๆ ทันที
+    if (node.cleared) {
+      this.currentNodeId = node.id;
+      this.persist();
+      this.goTo('zone');
+      return;
+    }
 
     if (node.type === NodeType.TOWN) { this.arriveTown(zone.index); return; }
     if (node.type === NodeType.ALTAR) { this.goTo('altar_event'); return; }
@@ -480,9 +490,9 @@ export class GameController {
       return;
     }
     if (node.type === NodeType.EVENT) {
-      const gold = randInt(EVENT_GOLD) + zone.dangerTier * 8;
-      this.player.gold += gold;
-      this.lastResult = { kind: 'event', gold };
+      const mats = 1 + Math.floor(Math.random() * 2);
+      addMaterial(this.player, zone.index, mats);
+      this.lastResult = { kind: 'event_mat', mats, zoneIndex: zone.index };
       this.markNodeCleared(node);
       this.goTo('event_result');
       return;
@@ -653,10 +663,17 @@ export class GameController {
       }
     }
 
-    let lordSlain = false;
+let lordSlain = false;
     if (node.type === NodeType.LORD) {
       zone.lordDefeated = true;
       lordSlain = true;
+      
+      // 👇 บันทึกว่าบอสที่เฝ้าเป้าหมายไหนถูกจัดการแล้ว
+      if (!zone.defeatedLords) zone.defeatedLords = [];
+      if (node.macroTarget && !zone.defeatedLords.includes(node.macroTarget)) {
+        zone.defeatedLords.push(node.macroTarget);
+      }
+      
       this.player.maxZone = Math.max(this.player.maxZone || 1, zone.index + 1);
     }
 
@@ -763,7 +780,7 @@ export class GameController {
     if (this.place.kind !== 'town') return;
     const item = removeFromBag(this.player, itemId);
     if (!item) return;
-    this.player.gold += sellPrice(item);
+    this.player.gold += sellPrice(item, this.place.zoneIndex);
     if (this.selectedBagItemId === itemId) this.selectedBagItemId = null;
     this.persist();
     this.render();
@@ -1278,7 +1295,7 @@ export class GameController {
         ${this.player.bag.map((item) => `
           <div class="item-chip" style="border-color:${item.rarity.color}">
             <div class="item-name" style="color:${item.rarity.color}">${item.name}</div>
-            <button class="btn btn-tiny btn-secondary" data-action="sell-bag-item" data-item="${item.id}">${t('shop.sell', { n: sellPrice(item) })}</button>
+            <button class="btn btn-tiny btn-secondary" data-action="sell-bag-item" data-item="${item.id}">${t('shop.sell', { n: sellPrice(item, this.place.zoneIndex) })}</button>
           </div>`).join('')}
       </div>
       <button class="btn btn-secondary" data-action="goto-town-from-shop">${t('inv.back')}</button>
@@ -1436,7 +1453,7 @@ export class GameController {
           </table>
           <div class="menu-actions">
             <button class="btn btn-primary" data-action="bag-equip" data-item="${selected.id}">${t('bag.equip')}</button>
-            <button class="btn btn-secondary" data-action="bag-sell" data-item="${selected.id}" ${inTown ? '' : 'disabled'}>${inTown ? t('bag.sellItem', { n: sellPrice(selected) }) : t('bag.sellLocked')}</button>
+            <button class="btn btn-secondary" data-action="bag-sell" data-item="${selected.id}" ${inTown ? '' : 'disabled'}>${inTown ? t('bag.sellItem', { n: sellPrice(selected, this.place.zoneIndex) }) : t('bag.sellLocked')}</button>
             <button class="btn btn-secondary" data-action="bag-close-compare">${t('bag.close')}</button>
           </div>
         </div>`;
@@ -1679,6 +1696,13 @@ export class GameController {
       <p class="reward-line">${t('gold.drop', { n: r.gold })}</p>
       <button class="btn btn-primary" data-action="continue-node">${t('result.continue')}</button>
     `;
+    if (r.kind === 'event_mat') {
+      return `
+        <h2>${t('event.title')}</h2>
+        <p class="reward-line">${t('mat.drop', { n: r.mats, mat: materialName(r.zoneIndex) })}</p>
+        <button class="btn btn-primary" data-action="continue-node">${t('result.continue')}</button>
+      `;
+    }
   }
 
   renderAltarScreen() {

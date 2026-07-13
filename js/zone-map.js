@@ -365,10 +365,8 @@ export function cursedDropChanceFor(node, zone) {
 // ---------------- Economy drops ----------------
 
 export function goldDropFor(node, zone, won) {
-  const base = (12 + node.depth * 6) * dangerMultiplier(zone.dangerTier) * (TIER_MULT[node.type] || 1);
-  // v6: Blood Moon — the enemy's frenzy gilds the corpse. x2 gold on a win.
-  const moonMult = won && node.hazard === NodeHazard.BLOOD_MOON ? 2 : 1;
-  return Math.max(1, Math.round((won ? base : base * 0.25) * moonMult));
+  // มอนสเตอร์ไม่พกเงินสด! เงินหาได้จากการขายของให้ NPC เท่านั้น
+  return 0;
 }
 
 /** Zone material drops: chance on a normal win, guaranteed and larger for elites and the Lord. */

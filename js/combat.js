@@ -119,6 +119,12 @@ function log(bs, side, text, outcome, payload = {}) {
 function passivesOf(bs, side) {
   const entity = bs[side];
   if (!entity.equipment) return [];
+  // v8: equipment passives are DORMANT until the Hidden Runesmith awakens
+  // them. Gate strictly on `=== false` so only entities that carry the flag
+  // (Players) are affected — Combatants (monsters/PvP bots) have no flag
+  // (undefined) and keep behaving as before, and a human PvP opponent is
+  // gated by their OWN flag, not the local player's.
+  if (entity.passivesUnlocked === false) return [];
   return Object.values(entity.equipment).filter(Boolean).map((i) => i.passive).filter(Boolean);
 }
 function hasPassive(bs, side, id) { return passivesOf(bs, side).some((p) => p.id === id); }

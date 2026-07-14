@@ -93,6 +93,21 @@ export function loadGameState(userId) {
   return Promise.resolve(readJSON(SAVE_PREFIX + userId, null));
 }
 
+/**
+ * v9.1: given the cloud copy and the synchronous local mirror of the same
+ * save, return whichever is NEWER. `savedAt` (stamped by persist()) decides;
+ * a pre-v9 save without it loses to any stamped one, and two unstamped
+ * saves fall back to the maxCP heuristic (never discard the further run).
+ */
+export function pickNewestSave(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  const at = a.savedAt || 0;
+  const bt = b.savedAt || 0;
+  if (at !== bt) return at > bt ? a : b;
+  return (a.player?.maxCP || 0) >= (b.player?.maxCP || 0) ? a : b;
+}
+
 // ======================= Guest -> Cloud migration =======================
 
 /**

@@ -295,6 +295,9 @@ h3 { font-family: var(--font-display); font-size: 1.05rem; margin: 0 0 8px; }
   color: #f3d488; background: rgba(139, 26, 61, 0.28); border: 1px solid rgba(178, 58, 72, 0.6); border-radius: 8px; }
 .boss-gate { margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(224, 185, 89, 0.28); }
 .map-node.lord-slain { opacity: 0.9; filter: grayscale(0.35); }
+/* v9.1 */
+.save-warning.save-recovered { color: var(--verdigris-bright, #7fd0b8); background: rgba(62, 142, 126, 0.16); border-color: rgba(62, 142, 126, 0.55); }
+.takeover-shell { text-align: center; }
 .loot-actions { display: flex; gap: 8px; }
 
 .portrait-large { margin: 8px 0 20px; }

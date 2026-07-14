@@ -360,17 +360,36 @@ export function findNode(zone, nodeId) {
  * you. Backtracking is free movement through ground you've already taken —
  * you can never retreat into an uncleared node (that would skip its fight).
  */
-export function getAvailableNodeIds(zone, currentNodeId) {
-  if (!currentNodeId) return new Set(zone.entranceIds);
-  const current = findNode(zone, currentNodeId);
-  if (!current) return new Set(zone.entranceIds);
+eexport function getAvailableNodeIds(zone, currentNodeId) {
+    const available = new Set();
+    const allNodes = zone.floors.flat(); // ดึง Node ทั้งหมดในแมพมาไว้รวมกัน
 
-  const ids = new Set(current.connectsTo);              // forward: the crawl continues
-  for (const parentId of parentIdsOf(zone, currentNodeId)) {
-    const parent = findNode(zone, parentId);
-    if (parent && parent.cleared) ids.add(parentId);    // backward: only over ground already won
-  }
-  return ids;
+    // กรณีเพิ่งเข้าแมพมาใหม่ ยังไม่มี Node ปัจจุบัน ให้เดินเข้าชั้นแรกได้ทั้งหมด
+    if (!currentNodeId) {
+        if (zone.floors.length > 0) {
+            zone.floors[0].forEach(n => available.add(n.id));
+        }
+        return available;
+    }
+
+    const currentNode = allNodes.find(n => n.id === currentNodeId);
+    if (!currentNode) return available;
+
+    // เช็ก Node ทั้งหมดว่ามีเส้นเชื่อมกับจุดที่เรายืนอยู่หรือไม่
+    allNodes.forEach(targetNode => {
+        // 1. ทางไปข้างหน้า (Forward): จุดที่เรายืน ชี้ไปหาเป้าหมายหรือไม่?
+        const isForward = currentNode.connectsTo && currentNode.connectsTo.includes(targetNode.id);
+
+        // 2. ทางถอยหลัง/ด้านข้าง (Backward/Lateral): เป้าหมาย ชี้มาหาจุดที่เรายืนหรือไม่?
+        const isBackward = targetNode.connectsTo && targetNode.connectsTo.includes(currentNode.id);
+
+        // *** หัวใจสำคัญ: ถ้ามีเส้นเชื่อมต่อกัน (ไปหรือกลับ) ให้เปิดทางเดินทั้งหมด! ***
+        if (isForward || isBackward) {
+            available.add(targetNode.id);
+        }
+    });
+
+    return available;
 }
 
 /**

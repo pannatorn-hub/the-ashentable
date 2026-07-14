@@ -1,9 +1,20 @@
-// i18n.js
+// i18n.js (v10 — Bilingual TH/EN)
 // ---------------------------------------------------------------------------
-// Localization. All player-facing text lives here as Thai strings keyed by
-// stable English ids — code identifiers stay English, UI is Thai. t(key,
-// params) interpolates {placeholders}. Adding another language later means
-// adding a second table and a setLanguage() switch; no other file changes.
+// Localization. All player-facing text lives here, keyed by stable English
+// ids — code identifiers stay English, UI text is looked up through t(key,
+// params), which interpolates {placeholders}.
+//
+// v10 CHANGE: the single Thai table is now two parallel tables, TH and EN,
+// built with the exact same keys in the exact same order (every TH block
+// below has a matching EN block). t()'s signature and every call site in
+// the codebase are UNCHANGED — only this file grows. The active table is
+// swapped by setLanguage('th' | 'en'), which also persists the choice to
+// localStorage (key: 'ashen_lang', matching the project's ashen_* naming
+// convention) so it survives reloads. Default language is Thai.
+//
+// Fallback chain inside t(): current language -> Thai -> the raw key. This
+// means a string that's momentarily missing from EN degrades to Thai
+// instead of showing a raw i18n key to an English-reading player.
 // Zero DOM dependencies.
 // ---------------------------------------------------------------------------
 
@@ -203,6 +214,171 @@ const TH = {
   'item.ring': 'แหวน', 'item.charm': 'เครื่องราง', 'item.amulet': 'สร้อยตราลับ',
   'slot.weapon': 'อาวุธ', 'slot.armor': 'ชุดเกราะ', 'slot.accessory': 'เครื่องประดับ',
   'passive.vampiric': 'คมกระหายเลือด', 'passive.vampiric.desc': 'ฟื้นฟู 8% ของดาเมจเมื่อสวนกลับสำเร็จ',
+  'passive.thorns': 'เกราะหนาม', 'passive.thorns.desc': 'สะท้อน 15% ของดาเมจที่ได้รับกลับไปหาผู้โจมตี',
+  'passive.fleetfoot': 'ฝีเท้าสายลม', 'passive.fleetfoot.desc': 'หลบครั้งแรกในแต่ละการต่อสู้ ได้ความเร็ว +12 จนจบ',
+
+  // ---- v8: Dormant Passives & the Hidden Runesmith (เควสต์ปลุกพลังยุทธภัณฑ์) ----
+  'passive.dormant': '🔒 พลังหลับใหล — มีเสียงลือว่าช่างตีรูนแห่ง{town}ปลุกมันให้ตื่นได้',
+  'runesmith.title': 'ช่างตีรูนผู้ซ่อนเร้น',
+  'runesmith.lore': 'ทันทีที่คุณก้าวผ่านรั้วค่าย คนแคระชราร่างกำยำคว้าแขนคุณไว้แน่น ดวงตาขุ่นขาวของเขาจ้องเขม็งไปยังยุทธภัณฑ์ข้างกายคุณ "เสียงหึ่งต่ำ ๆ นั่น... เจ้าไม่ได้ยินรึ มันยังหลับอยู่ พลังข้างในหลับใหลมาเนิ่นนาน" เขาพึมพำ พลางลูบทั่งเหล็กดำสนิทข้างกองไฟ "จันทร์ที่ดับดิ่งลงเหวเบื้องล่างเคยสอนข้าสลักรูนปลุกวิญญาณโลหะ ให้ข้าลงค้อนสักครั้งเถิด — แล้วธาตุแท้ของมันจะตื่นขึ้นทั้งหมด ตลอดกาล"',
+  'runesmith.confirm': '⚒ ให้ช่างตีรูนปลุกพลังยุทธภัณฑ์',
+
+  // ---- v9: Boss progression, roads, checkpoints ----
+  'lord.roadOpen': 'ร่างของจอมมารล้มลง — เส้นทางสู่{place}เปิดออกแล้ว ธรณีประตูที่มันเฝ้าไว้ไม่มีผู้ใดขวางอีกต่อไป',
+  'lord.advance': '🚪 เดินทางต่อไปยัง{place}',
+  'lord.stay': '🏕 ยังอยู่ในแดนนี้ต่อ',
+  'node.lordSlain': 'รังของจอมมารที่ล่มสลาย — เหลือเพียงสมุนเร่ร่อน',
+  // v9.2
+  'lord.deadEnd': 'จอมมารสิ้นลม — แต่เบื้องหลังบัลลังก์มีเพียงผาหินตัน ไม่มีเส้นทางใดทอดต่อไปจากที่นี่',
+  'node.clearedPass': 'พื้นที่ที่ยึดได้แล้ว — เดินผ่านได้โดยไม่ต้องรบ',
+  'zone.backtrackHint': '↩ เดินย้อนกลับไปยังช่องที่ยึดได้แล้วได้ตลอด — ผ่านฟรี ไม่มีการต่อสู้ (เว้นแต่มีสัตว์ร้ายพลัดหลงมา)',
+  'prowler.encounter': '⚠ สัตว์ร้ายพลัดหลงเข้ามาในพื้นที่ที่คุณยึดไว้ — มันไม่ได้ฟื้นคืนชีพ แต่มันตามกลิ่นเลือดมา',
+  'world.unknownRoad': 'เส้นทางที่ยังไร้ชื่อ',
+  'save.failed': '⚠ บันทึกไม่สำเร็จ — ความคืบหน้าอาจสูญหายเมื่อปิดหน้าต่าง ({err})',
+  'save.recovered': '⛨ กู้คืนความคืบหน้าล่าสุดจากเครื่องนี้แล้ว — ข้อมูลบนคลาวด์ตามหลังอยู่ ระบบกำลังซิงก์ให้ใหม่',
+  'session.takeover.title': 'เกมถูกเปิดในแท็บอื่น',
+  'session.takeover.body': 'เพื่อป้องกันเซฟย้อนเวลา แท็บนี้จึงหยุดลง — เล่นต่อในแท็บล่าสุดได้เลย หรือกดปุ่มด้านล่างเพื่อกลับมาเล่นที่แท็บนี้แทน',
+  'session.takeover.reload': '⟳ กลับมาเล่นที่แท็บนี้',
+  'inv.title': 'ตุ๊กตากระดาษ',
+  'inv.empty': 'ว่าง',
+  'inv.unequip': 'ถอดออก',
+  'inv.back': 'กลับ',
+
+  // ---- Biomes ----
+  'biome.ember_wastes': 'ทุ่งถ่านคุ', 'biome.ember_wastes.flavor': 'ผืนดินแตกระแหงกับถ่านที่ไหม้ช้า ๆ',
+  'biome.verdant_hollow': 'หุบเขาเขียวชอุ่ม', 'biome.verdant_hollow.flavor': 'ซากปรักหักพังที่ถูกตะไคร่กลืนกิน',
+  'biome.frostpeak': 'ยอดเขาน้ำแข็ง', 'biome.frostpeak.flavor': 'หน้าผาถูกลมกัดกร่อนและน้ำแข็งโบราณ',
+  'biome.ashen_ruins': 'ซากเมืองเถ้าธุลี', 'biome.ashen_ruins.flavor': 'โครงกระดูกของเมืองที่ลืมชื่อตัวเอง',
+
+  // ---- Enemies ----
+  'enemy.beast': 'สัตว์ป่าดุร้าย',
+  'enemy.stalker': 'นักล่าชุบแกร่ง',
+  'enemy.warden': 'ผู้คุมแห่ง{biome}',
+};
+
+// ============================ v4 — Dark World ============================
+// Elden Ring-inspired world strings: 10 zones, capital, towns, NPCs with
+// deep lore, economy, bag, fog of war. Tone: bleak, mysterious, reverent.
+Object.assign(TH, {
+  // ---- Capital ----
+  'capital.name': 'เวลันทีร์ นครหลวงแห่งเถ้า',
+  'capital.lore': 'นครที่เคยเปล่งประกายดั่งทองคำ บัดนี้เหลือเพียงหอคอยหักและระฆังที่ลั่นเองยามค่ำคืน ผู้คนที่ยังเหลือไม่เงยหน้ามองท้องฟ้าอีกต่อไป',
+  'capital.rested': 'ร่างกายของคุณได้พักพิงใต้เงากำแพงนครหลวง — พลังชีวิตฟื้นเต็ม',
+  'capital.depart': '⚔ ออกเดินทางสู่แดนเถื่อน',
+  'capital.travel': '🕯 วาร์ปสู่เมืองที่ค้นพบ',
+  'capital.bag': '👜 ถุงมิติ',
+  'capital.arena': '🏆 สังเวียนเลือด (PvP)',
+
+  // ---- World map ----
+  'world.title': 'แดนเถื่อนทั้งสิบ',
+  'world.subtitle': 'ทุกเส้นทางทอดออกจากเวลันทีร์ และบางเส้นทาง...ไม่พาใครกลับมา',
+  'world.enter': 'ย่างเท้าเข้าไป',
+  'world.townFound': '✓ พบเมืองแล้ว',
+  'world.lordSlain': '☠ จ้าวดินแดนถูกสังหาร',
+  'world.back': 'กลับสู่นครหลวง',
+  'world.danger': 'ระดับภัย',
+
+  // ---- Zones (10) ----
+  'zone.z0': 'ป่าเงาโศก', 'zone.z0.lore': 'ต้นไม้ที่นี่ไม่ผลัดใบ — พวกมันผลัดน้ำตา',
+  'zone.z1': 'ที่ราบกระดูกเงียบ', 'zone.z1.lore': 'กระดูกยักษ์โบราณโผล่พ้นดิน ไม่มีใครรู้ว่ามันคุกเข่าให้สิ่งใด',
+  'zone.z2': 'หนองน้ำนิทรา', 'zone.z2.lore': 'ผู้หลับใหลในหนองน้ำนี้ยังฝันอยู่ และฝันของพวกเขารั่วไหลออกมา',
+  'zone.z3': 'ผาสะอื้น', 'zone.z3.lore': 'เสียงร่ำไห้ในสายลมไม่ใช่ลม ชาวเผาถ่านรู้ดี จึงไม่มีใครอยู่ฟังจนจบ',
+  'zone.z4': 'ทะเลทรายอัฐิ', 'zone.z4.lore': 'ทรายที่นี่เคยเป็นกองทัพ ยามพายุพัด มันยังพยายามเดินขบวน',
+  'zone.z5': 'หุบเหวจันทร์ดับ', 'zone.z5.lore': 'ดวงจันทร์เคยตกลงมาที่นี่หนึ่งดวง สิ่งที่คลานออกมาจากหลุมนั้นยังไม่ตาย',
+  'zone.z6': 'ป่าราคีเรืองแสง', 'zone.z6.lore': 'แสงเรืองในความมืดมิใช่ความหวัง — มันคือเหยื่อล่อ',
+  'zone.z7': 'ธารน้ำแข็งคร่ำครวญ', 'zone.z7.lore': 'น้ำแข็งกักขังเสียงสุดท้ายของผู้แช่แข็ง เดินเบา ๆ เถิด เผื่อพวกเขาจะได้หลับ',
+  'zone.z8': 'เนินสุสานหลงลืม', 'zone.z8.lore': 'หลุมศพที่นี่ไม่มีชื่อ เพราะชื่อคือสิ่งแรกที่ดินแดนนี้กลืนกิน',
+  'zone.z9': 'ขอบโลกอันแหลกสลาย', 'zone.z9.lore': 'สุดปลายแผ่นดิน โลกแตกออกเป็นเสี่ยง และบางสิ่งกำลังปีนขึ้นมาจากรอยแยก',
+
+  // ---- Materials (per zone) ----
+  'mat.z0': 'น้ำตาเงา', 'mat.z1': 'ผงกระดูกเงียบ', 'mat.z2': 'ไข่มุกนิทรา', 'mat.z3': 'หินสะอื้น',
+  'mat.z4': 'ทรายอัฐิ', 'mat.z5': 'เศษจันทร์ดับ', 'mat.z6': 'สปอร์ราคี', 'mat.z7': 'น้ำแข็งคร่ำครวญ',
+  'mat.z8': 'ดินสุสาน', 'mat.z9': 'เศษขอบโลก',
+  'mat.generic': 'วัสดุแดนเถื่อน',
+
+  // ---- Towns (per zone) ----
+  'town.z0': 'หมู่บ้านตะเกียงหรี่', 'town.z1': 'ด่านกระดูกพัก', 'town.z2': 'ท่าเรือร้างนิทรา', 'town.z3': 'เพิงผาผู้ลี้ภัย',
+  'town.z4': 'โอเอซิสสุดท้าย', 'town.z5': 'ค่ายขอบเหว', 'town.z6': 'สถานีเก็บสปอร์', 'town.z7': 'กระท่อมไออุ่น',
+  'town.z8': 'ศาลาเฝ้าสุสาน', 'town.z9': 'ป้อมปลายทาง',
+  'town.discovered': 'คุณพบ {town} — ที่หลบภัยกลางแดนมรณะ',
+  'town.rested': 'ใต้ชายคาที่ปลอดภัย ร่างกายของคุณฟื้นเต็ม',
+  'town.shop': '🛒 ร้านค้า',
+  'town.continue': '⚔ บุกลึกต่อไป',
+  'town.toCapital': '🚶 เดินกลับนครหลวง',
+  'town.travel': '🕯 วาร์ปเดินทาง',
+
+  // ---- Node types (new) ----
+  'node.elite': 'อสูรร้าย',
+  'node.campfire': 'กองไฟ',
+  'node.town': 'เมือง',
+  'node.fog': '???',
+  'node.lord': 'จ้าวดินแดน',
+  'campfire.rest': 'เปลวไฟเล็ก ๆ ท้าทายความมืด คุณนั่งลงและหายใจอีกครั้ง',
+  'campfire.healed': 'ฟื้นฟู {n} HP',
+  'gate.toCapital': 'ทางลัดคดเคี้ยวย้อนกลับสู่เวลันทีร์ปรากฏขึ้นเบื้องหน้า',
+  'gate.use': '🚶 ใช้ทางลัดกลับนครหลวง',
+
+  // ---- Zone screen ----
+  'zone.retreat': '🏳 ถอยทัพ',
+  'zone.retreated': 'คุณถอยกลับมาอย่างสิ้นเรี่ยวแรง — แดนเถื่อนไม่จดจำผู้พ่ายแพ้ แต่มันรอ',
+  'zone.softcapWarn': 'ยิ่งลึก ความตายยิ่งหนาแน่น — เกินเมืองไปแล้ว ศัตรูจะแข็งแกร่งขึ้นทวีคูณ',
+  'defeat.returned': 'ความมืดกลืนคุณ... แล้วคายร่างซีดเผือดกลับสู่ {place}',
+
+  // ---- Economy ----
+  'gold': 'ทอง',
+  'gold.drop': '+{n} ทอง',
+  'mat.drop': '+{n} {mat}',
+  'shop.title': 'ร้านค้าแห่ง {town}',
+  'shop.buy': 'ซื้อ ({n} ทอง)',
+  'shop.sell': 'ขาย (+{n} ทอง)',
+  'shop.noGold': 'ทองไม่พอ',
+  'shop.bagFull': 'ถุงมิติเต็ม',
+  'shop.stockEmpty': 'ชั้นวางว่างเปล่า — พ่อค้าจ้องมองคุณเงียบ ๆ',
+  'shop.yourBag': 'ของในถุงของคุณ',
+  'travel.title': 'วาร์ปเดินทาง',
+  'travel.desc': 'เปลวเทียนมิติจะพาคุณข้ามแดน — แลกกับทองและความทรงจำเลือนราง',
+  'travel.cost': 'ไป {place} ({n} ทอง)',
+  'travel.capital': 'นครหลวงเวลันทีร์',
+  'travel.none': 'ยังไม่พบเมืองใดในแดนเถื่อน',
+
+  // ---- Dimensional Bag ----
+  'bag.title': 'ถุงมิติ ({used}/{cap})',
+  'bag.empty': 'ว่างเปล่า — มีแต่เสียงสะท้อนจากมิติอื่น',
+  'bag.equipped': 'สวมใส่อยู่',
+  'bag.materials': 'วัสดุ',
+  'bag.full.autoSold': 'ถุงมิติเต็ม! {item} สลายเป็นทอง (+{n})',
+  'bag.compare': 'เปรียบเทียบ',
+  'bag.equip': 'สวมใส่',
+  'bag.sellItem': 'ขาย (+{n})',
+  'bag.close': 'ปิด',
+  'compare.title': 'เปรียบเทียบอุปกรณ์',
+  'compare.new': 'ชิ้นใหม่',
+  'compare.current': 'ที่สวมอยู่',
+  'compare.none': '— ไม่มี —',
+  'loot.toBag': '{item} ถูกเก็บเข้าถุงมิติ',
+
+  // ---- NPCs ----
+  'npc.talk': 'สนทนา',
+  'npc.service': 'บริการ',
+  'npc.notEnoughMat': 'วัสดุไม่พอ',
+  'npc.maxed': 'ถึงขีดสุดแล้ว',
+
+  'npc.vesper.name': 'เวสเปอร์', 'npc.vesper.title': 'ปราชญ์ต้องสาปแห่งหอสมุดล่ม',
+  'npc.vesper.lore': 'ครั้งหนึ่งเวสเปอร์เคยเป็นหัวหน้าบรรณารักษ์แห่งเวลันทีร์ จนกระทั่งเขาอ่านหนังสือเล่มที่ไม่ควรมีอยู่จริง บัดนี้ครึ่งร่างของเขาจมอยู่ในมิติอื่นตลอดกาล — มองเห็นได้เพียงเงาเลือนที่ขอบตา เขาจึงเข้าใจ "ที่ว่าง" ดีกว่าผู้ใดในโลกนี้',
+  'npc.vesper.line1': '"ถุงของเจ้าน่ะหรือ... มันไม่ได้เล็กหรอก เจ้าต่างหากที่ยังไม่รู้จักความว่างเปล่าดีพอ"',
+  'npc.vesper.line2': '"เอาวัสดุจากแดนเถื่อนมา ข้าจะเย็บรอยแยกมิติให้กว้างขึ้น... เหมือนที่มันเย็บร่างข้า"',
+  'npc.vesper.svc': 'ขยายถุงมิติ +2 ช่อง',
+  'npc.vesper.cost': 'ราคา: วัสดุชนิดเดียวกัน {n} ชิ้น',
+
+  'npc.isra.name': 'อิศรา', 'npc.isra.title': 'ผู้สอดแนมเนตรดับ',
+  'npc.isra.lore': 'อิศราเคยเป็นผู้สอดแนมหลวงที่มองไกลที่สุดในแผ่นดิน จนวันที่นางเห็น "สิ่งที่อยู่ขอบโลก" ดวงตาของนางไหม้เป็นสีขาวในคืนเดียว กระนั้นนางกลับบอกว่า บัดนี้จึงเห็นชัดกว่าเดิม — เพราะแผนที่ที่แท้จริงไม่ได้มองด้วยตา',
+  'npc.isra.line1': '"อย่าเชื่อดวงตา เจ้าหนู หมอกไม่เคยซ่อนอะไร... มันแค่เมตตาไม่ให้เจ้าเห็นเร็วเกินไป"',
+  'npc.isra.line2': '"นำวัสดุมา ข้าจะสอนให้เจ้าฟังเสียงของเส้นทางที่ยังมาไม่ถึง"',
+  'npc.isra.svc': 'ขยายระยะมองเห็นแผนที่ +1 ก้าว',
+  'npc.isra.cost': 'ราคา: วัสดุชนิดเดียวกัน {n} ชิ้น',
+
+  'npc.krom.name': 'ครอม', 'npc.krom.title': 'ช่างตีเหล็กแขนเดียว',
+  'npc.krom.lore': 'ครอมสูญเสียแขนขวาใc': 'ฟื้นฟู 8% ของดาเมจเมื่อสวนกลับสำเร็จ',
   'passive.thorns': 'เกราะหนาม', 'passive.thorns.desc': 'สะท้อน 15% ของดาเมจที่ได้รับกลับไปหาผู้โจมตี',
   'passive.fleetfoot': 'ฝีเท้าสายลม', 'passive.fleetfoot.desc': 'หลบครั้งแรกในแต่ละการต่อสู้ ได้ความเร็ว +12 จนจบ',
 

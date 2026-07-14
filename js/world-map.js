@@ -26,7 +26,7 @@
 // you're inside a single region. Zero DOM dependencies.
 // ---------------------------------------------------------------------------
 
-import { generateMicroZone, registerOuterZoneMeta, migrateBossGating } from './zone-map.js';
+import { generateMicroZone, registerOuterZoneMeta, syncZoneBosses } from './zone-map.js';
 
 export const MacroKind = Object.freeze({ HUB: 'hub', ZONE: 'zone' });
 export const ZONE_COUNT = 10; // the 10 hand-authored regions of the pre-Capital web
@@ -89,9 +89,12 @@ export function generateWorld() {
     const def = STATIC_ZONE_GRAPH[i];
     const children = def.children.map(String);
     if (def.gatesToCapital) children.push('capital');
-    
-    // 👇 ส่งเฉพาะทางออกจริง (children) ไปให้แมพย่อย เพื่อสร้างบอสตามจำนวนนั้น
-    zones[i] = generateMicroZone(i, dangerTier, { exits: def.children.map(String) });
+
+    // v9.2: exits MUST be the exact road list the macro node will carry —
+    // including 'capital'. Passing only def.children left the Capital road
+    // unguarded (zone 7's single Lord guarded `null`, so killing him unlocked
+    // nothing and the post-boss Continue button had no road to offer).
+    zones[i] = generateMicroZone(i, dangerTier, { exits: children });
     
     nodes[String(i)] = {
       id: String(i), kind: MacroKind.ZONE, zoneIndex: i, connectsTo: children,
@@ -121,7 +124,10 @@ export function migrateWorldBossGating(world) {
     if (!zone) continue;
     const macroNode = world.macro.nodes[String(zone.index)];
     const children = macroNode ? macroNode.connectsTo : [];
-    if (migrateBossGating(zone, children)) touched = true;
+    // v9.2: this now REPAIRS rather than merely flags — a save whose regions
+    // each carry one unmapped Lord grows the missing Lords, stamps their
+    // roads, and keeps every kill the player already earned.
+    if (syncZoneBosses(zone, children)) touched = true;
   }
   return touched;
 }
@@ -285,6 +291,12 @@ export function expandOuterFrontier(macro, world, fromId) {
   }
 
   from.connectsTo = newIds;
+  // v9.2: an outer region's roads are born here, long after its micro map was
+  // generated with zero exits. Grow one Lord per new road right now, or the
+  // region would sit there with a single null-target boss forever.
+  if (from.kind === MacroKind.ZONE && world.zones[from.zoneIndex]) {
+    syncZoneBosses(world.zones[from.zoneIndex], newIds);
+  }
   ensureSmugglerPlaced(macro, world); // fresh fog just opened up — she may have somewhere new to hide
   return newIds;
 }

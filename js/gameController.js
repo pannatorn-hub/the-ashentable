@@ -70,7 +70,7 @@ import {
   zoneName, zoneLore, townName, materialName,
   rollCampfireAmbush, generateAmbushEnemy, cursedDropChanceFor,
   hazardName, hazardDesc, hazardIcon, HAZARD_SIGHT_VISION,
-  effectiveNodeType, isLiveBossNode,
+  effectiveNodeType, isLiveBossNode, rollProwler,
 } from './zone-map.js';
 import {
   generateLoot, salvageValue, passiveName, passiveDesc,
@@ -195,6 +195,7 @@ export class GameController {
     // v6:
     this.smugglerStock = null;      // the current Wandering Smuggler encounter's offer
     this.ambushNode = null;         // set while a Campfire Ambush fight is being resolved
+    this.prowlerNode = null;        // v9.2: set while re-fighting a wanderer on an already-cleared node
     this.hiddenAwakenNotice = null; // { id } — a Hidden Unique Skill just awakened; shown once, then dismissed
 
     // v7: the animation layer and the stable battle mount's bookkeeping.
@@ -584,17 +585,30 @@ export class GameController {
     const zone = this.currentZone();
     const node = findNode(zone, nodeId);
     if (!node) return;
+    // v9.2: `available` now includes cleared nodes BEHIND the player, so
+    // walking back over ground you've already taken is legal movement.
     const available = getAvailableNodeIds(zone, this.currentNodeId);
     const visible = computeVisibleNodeIds(zone, this.currentNodeId, this.player.visionRange);
-    
-    // 1. ลบ || node.cleared ออก เพื่อให้กดช่องเก่าได้
     if (!available.has(nodeId) || !visible.has(nodeId)) return;
 
     this.activeNode = node;
 
-    // 2. ถ้ากดช่องที่ผ่านแล้ว ให้ตัวละครเดินไปยืนฟรีๆ แล้วจบการทำงานเลย
+    // v9.2: A CLEARED NODE STAYS CLEARED for the rest of the expedition.
+    // Walking back onto it is free passage — no forced rematch. The only
+    // exception is a low roll for a wandering Prowler (see prowlerChance:
+    // 6% at tier 0, capped at 22% in the deep). The node keeps its cleared
+    // flag either way, so the ground never has to be re-won.
     if (node.cleared) {
       this.currentNodeId = node.id;
+      if (rollProwler(zone, node)) {
+        const fightNode = { ...node, type: effectiveNodeType(node) };
+        const enemy = generateEnemyForNode(fightNode, zone, this.player.level);
+        this.prowlerNode = node; // marks this fight as a re-encounter, not a first clear
+        this.battleState = startBattle(this.player, enemy, patternedBotPicker(SkillType.QUICK_STRIKE, 0.4), { fullHeal: false, hazard: node.hazard || null });
+        this.pvpMode = false;
+        this.goTo('battle');
+        return;
+      }
       this.persist();
       this.goTo('zone');
       return;
@@ -771,8 +785,9 @@ export class GameController {
     const zone = this.currentZone();
     const won = bs.winner === 'player';
     const isAmbush = !!this.ambushNode; // v6
+    const isProwler = !!this.prowlerNode; // v9.2: a re-encounter on cleared ground
     // v9: re-running a slain Lord's node pays NORMAL rewards, not boss rewards.
-    const wasBossFight = isLiveBossNode(node);
+    const wasBossFight = isLiveBossNode(node) && !isProwler;
     const effType = effectiveNodeType(node);
     const rewardNode = { ...node, type: effType };
     const rewards = NODE_REWARDS[effType] || NODE_REWARDS[NodeType.NORMAL];
@@ -786,6 +801,7 @@ export class GameController {
 
     if (!won) {
       this.ambushNode = null; // v6
+      this.prowlerNode = null; // v9.2
       this.returnToSanctuary(); // sets lastResult = { kind: 'defeat_return', placeName, ... }
       Object.assign(this.lastResult, { xp, gold, opponentName: bs.enemy.name });
       this.goTo('node_result');
@@ -828,12 +844,14 @@ export class GameController {
       this.player.hp = Math.min(maxHp, this.player.hp + Math.round(maxHp * CAMPFIRE_HEAL_PCT));
       this.ambushNode = null;
     }
-    this.markNodeCleared(node);
+    this.prowlerNode = null; // v9.2
+    this.markNodeCleared(node); // idempotent: a prowler fight leaves the node exactly as cleared as it was
 
     this.lastResult = {
       kind: 'battle', won: true, xp, gold, mats, lootMsgs: [], leveledUp, lordSlain,
-      opponentName: bs.enemy.name, zoneIndex: zone.index, ambush: isAmbush,
+      opponentName: bs.enemy.name, zoneIndex: zone.index, ambush: isAmbush, prowler: isProwler,
       unlockedMacroId, // v9: drives the "Continue to the next land" button
+      openRoads: lordSlain ? this.openRoadsFromHere() : [], // v9.2: every road this region now offers
     };
     this.persist();
     this.goTo('node_result');
@@ -1356,6 +1374,7 @@ export class GameController {
     const zone = this.currentZone();
     const available = getAvailableNodeIds(zone, this.currentNodeId);
     const visible = computeVisibleNodeIds(zone, this.currentNodeId, this.player.visionRange);
+    const currentNode = this.currentNodeId ? findNode(zone, this.currentNodeId) : null;
     const typeMeta = {
       [NodeType.NORMAL]: '⚔', [NodeType.HARD]: '⚔⚔', [NodeType.ELITE]: '👹', [NodeType.LORD]: '☠',
       [NodeType.EVENT]: '❔', [NodeType.ALTAR]: '🔥', [NodeType.CAMPFIRE]: '🕯', [NodeType.TOWN]: '🏘',
@@ -1379,13 +1398,19 @@ export class GameController {
       if (!visible.has(node.id)) {
         return `<button class="map-node fog" style="${style}" disabled title="${t('node.fog')}"><span class="node-icon">?</span></button>`;
       }
-      const isAvailable = available.has(node.id) && !node.cleared;
+      // v9.2: cleared nodes are CLICKABLE now — that is what makes walking
+      // back possible. They just don't start a fight (see selectNode).
+      const isAvailable = available.has(node.id);
       const isCurrent = node.id === this.currentNodeId;
       // v9: a slain Lord's node renders (and fights) as an ordinary combat node.
       const effType = effectiveNodeType(node);
       const slainLord = node.type === NodeType.LORD && node.bossSlain;
-      const label = slainLord ? t('node.lordSlain') : t(`node.${effType}`);
-      const cls = ['map-node', effType, slainLord ? 'lord-slain' : '', node.cleared ? 'cleared' : '', isAvailable ? 'available' : '', isCurrent ? 'current' : ''].join(' ');
+      const isBehind = node.cleared && !isCurrent && available.has(node.id) && !(currentNode && currentNode.connectsTo.includes(node.id));
+      const label = node.cleared
+        ? (slainLord ? t('node.lordSlain') : t('node.clearedPass'))
+        : t(`node.${effType}`);
+      const cls = ['map-node', effType, slainLord ? 'lord-slain' : '', node.cleared ? 'cleared' : '',
+        isAvailable ? 'available' : '', isBehind ? 'behind' : '', isCurrent ? 'current' : ''].join(' ');
       // v6: hazard badge — always visible once cleared (you've already lived it), or earlier if vision is sharp enough.
       const showHazard = node.hazard && (node.cleared || canSeeHazards);
       const hazardBadge = showHazard ? `<span class="hazard-badge" title="${hazardName(node.hazard)}">${hazardIcon(node.hazard)}</span>` : '';
@@ -1395,7 +1420,6 @@ export class GameController {
       </button>`;
     }).join('');
 
-    const currentNode = this.currentNodeId ? findNode(zone, this.currentNodeId) : null;
     const gateBtn = currentNode && currentNode.capitalGate && currentNode.cleared && this.zoneGatesToCapital(zone.index)
       ? `<p class="legend-note">${t('gate.toCapital')}</p><button class="btn btn-secondary" data-action="use-gate">${t('gate.use')}</button>` : '';
 
@@ -1404,6 +1428,7 @@ export class GameController {
       <p class="tagline">${zoneLore(zone.index)}</p>
       <p class="legend-note">${t('zone.softcapWarn')}</p>
       ${canSeeHazards ? `<p class="legend-note">${t('zone.hazardSight')}</p>` : ''}
+      <p class="legend-note">${t('zone.backtrackHint')}</p>
       <div class="map-wrap" style="aspect-ratio:${width}/${height}">
         <svg class="map-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">${edgesSvg}</svg>
         ${nodesHtml}
@@ -1851,18 +1876,24 @@ export class GameController {
         </div>`;
     }
 
-    // v9 POST-BOSS GATE. No auto-warp anywhere: after a Lord falls, the player
-    // decides when to move on. The button only appears once every loot item
-    // has been decided (the loot gate holds the screen first).
+    // v9.2 POST-BOSS GATE. No auto-warp: after a Lord falls the player chooses.
+    // The roads now come from the MACRO LAYER (openRoadsFromHere), not from
+    // this one Lord's `macroTarget` — so a legacy save whose Lord carries a
+    // null target still gets a working Continue button, and a region with two
+    // slain Lords offers both roads. Shown once the loot gate is empty.
     let bossGate = '';
     if (r.lordSlain && !pending.length) {
+      const roads = (r.openRoads && r.openRoads.length) ? r.openRoads : this.openRoadsFromHere();
+      const roadBtns = roads.map((id) =>
+        `<button class="btn btn-primary" data-action="advance-next" data-macro="${id}">${t('lord.advance', { place: this.macroNodeLabel(id) })}</button>`).join('');
+      const headline = roads.length
+        ? t('lord.roadOpen', { place: roads.map((id) => this.macroNodeLabel(id)).join(' / ') })
+        : t('lord.deadEnd'); // a dead-end region's Lord guards treasure, not a road
       bossGate = `
         <div class="boss-gate">
-          <p class="reward-line">${t('lord.roadOpen', { place: this.macroNodeLabel(r.unlockedMacroId) })}</p>
+          <p class="reward-line">${headline}</p>
           <div class="menu-actions">
-            ${r.unlockedMacroId
-              ? `<button class="btn btn-primary" data-action="advance-next" data-macro="${r.unlockedMacroId}">${t('lord.advance', { place: this.macroNodeLabel(r.unlockedMacroId) })}</button>`
-              : ''}
+            ${roadBtns}
             <button class="btn btn-secondary" data-action="continue-node">${t('lord.stay')}</button>
           </div>
         </div>`;
@@ -1872,6 +1903,7 @@ export class GameController {
       <h2>${t('result.win')}</h2>
       <p>${t('result.win.body', { name: r.opponentName })}</p>
       ${r.ambush ? `<p class="reward-line">${t('ambush.survived')}</p>` : ''}
+      ${r.prowler ? `<p class="reward-line">${t('prowler.encounter')}</p>` : ''}
       <p class="reward-line">${t('result.goldReward', { xp: r.xp, gold: r.gold })}${r.leveledUp ? t('result.levelup') : ''}</p>
       ${r.mats > 0 ? `<p class="altar-note">${t('mat.drop', { n: r.mats, mat: materialName(r.zoneIndex) })}</p>` : ''}
       ${r.lordSlain ? `<p class="reward-line">${t('lord.slain', { zone: zoneName(r.zoneIndex) })}</p>` : ''}
@@ -1880,6 +1912,19 @@ export class GameController {
       ${bossGate}
       ${pending.length || r.lordSlain ? '' : `<button class="btn btn-primary" data-action="continue-node">${t('result.continue')}</button>`}
     `;
+  }
+
+  /**
+   * v9.2: every macro road currently open FROM the region the player stands
+   * in. This is the true answer to "where can I go now?" — it reads the same
+   * `defeatedLords` / legacy gating the World Map uses, so the Continue button
+   * can never disagree with the map.
+   */
+  openRoadsFromHere() {
+    const here = this.currentMacroId();
+    if (!here) return [];
+    const open = getAvailableMacroNodeIds(this.world.macro, this.world, here);
+    return [...open];
   }
 
   /** v9: human-readable name of a macro node id (region, Capital, or Start Village). */

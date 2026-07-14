@@ -16,13 +16,14 @@
 // Expected new data-action values GameController must handle (see the
 // integration notes shipped alongside this file):
 //   goto-worldmap, worldmap-back, macro-select-node (data-macro="<id>"),
-//   goto-settings, settings-back, link-account
+//   goto-settings, settings-back, link-account,
+//   change-language (data-lang="th"|"en") — v10 bilingual toggle
 //
 // Zero DOM dependencies (string templates only — same discipline as every
 // render* method in gameController.js).
 // ---------------------------------------------------------------------------
 
-import { t } from './i18n.js';
+import { t, getLanguage, AVAILABLE_LANGUAGES } from './i18n.js';
 import { MacroKind, getAvailableMacroNodeIds, computeVisibleMacroNodeIds, isMacroNodeConquered, isMacroNodeDiscovered } from './world-map.js';
 import { zoneName, zoneAccent, NodeType } from './zone-map.js';
 import { isGuest } from './auth.js';
@@ -165,16 +166,16 @@ export function renderSettingsPanel(ctx) {
     const canRename = (player.renameCount || 0) < 1; // 1 Free rename
     renameSection = `
       <div class="event-card">
-        <h3>เปลี่ยนชื่อตัวละคร</h3>
+        <h3>${t('rename.title')}</h3>
         ${canRename ? `
-          <p class="legend-note">คุณสามารถเปลี่ยนชื่อตัวละครได้ฟรี 1 ครั้ง</p>
-          <input type="text" id="rename-input" class="name-input" placeholder="กรอกชื่อใหม่..." maxlength="20" value="${renameDraft || ''}" style="margin-bottom: 12px; display: block; width: 100%; text-align: center;">
+          <p class="legend-note">${t('rename.freeNote')}</p>
+          <input type="text" id="rename-input" class="name-input" placeholder="${t('rename.placeholder')}" maxlength="20" value="${renameDraft || ''}" style="margin-bottom: 12px; display: block; width: 100%; text-align: center;">
           ${renameError ? `<p class="auth-error" style="color: #ff6b6b; font-size: 0.9em; margin-bottom: 10px;">${renameError}</p>` : ''}
-          <button class="btn btn-primary" data-action="rename-confirm">ยืนยันการเปลี่ยนชื่อ</button>
+          <button class="btn btn-primary" data-action="rename-confirm">${t('rename.confirm')}</button>
         ` : `
-          <p>ชื่อปัจจุบัน: <b>${player.name}</b></p>
+          <p>${t('rename.current', { name: player.name })}</p>
           ${renameSuccess ? `<p class="reward-line" style="color: #7fbf4d;">${renameSuccess}</p>` : ''}
-          <p class="legend-note">คุณใช้สิทธิ์การเปลี่ยนชื่อไปแล้ว</p>
+          <p class="legend-note">${t('rename.devNote')}</p>
         `}
       </div>
     `;
@@ -196,8 +197,27 @@ export function renderSettingsPanel(ctx) {
     </div>
   `;
 
+  // 3. Language Section (v10 — bilingual TH/EN toggle)
+  const activeLang = getLanguage();
+  const languageSection = `
+    <div class="event-card">
+      <h3>${t('settings.language.title')}</h3>
+      <p class="legend-note">${t('settings.language.note')}</p>
+      <div class="lang-toggle" role="group">
+        ${AVAILABLE_LANGUAGES.map((l) => `
+          <button class="btn ${l.code === activeLang ? 'btn-primary' : 'btn-secondary'}"
+                  data-action="change-language" data-lang="${l.code}"
+                  ${l.code === activeLang ? 'aria-pressed="true" disabled' : 'aria-pressed="false"'}>
+            ${l.label}
+          </button>
+        `).join('')}
+      </div>
+    </div>
+  `;
+
   return `
     <h2>${t('settings.title')}</h2>
+    ${languageSection}
     ${renameSection}
     ${linkSection}
     <div class="menu-actions">

@@ -434,8 +434,8 @@ Object.assign(TH, {
 // now lives here instead of the Capital menu).
 Object.assign(TH, {
   // ---- Start Village (the other hub, alongside the Capital) ----
-  'world.hub.start.name': 'หมู่บ้านเถ้าแรก',
-  'world.hub.start.lore': 'หมู่บ้านเล็ก ๆ ริมขอบแดนเถื่อน ไม่มีกำแพง ไม่มีนาม ไม่มีสิ่งใดค้ำประกันว่าพรุ่งนี้จะยังตั้งอยู่ ทว่ามันคือที่แห่งเดียวที่ยังจุดไฟไว้รอผู้เดินทางกลับ',
+  'world.hub.start.name': 'หมู่บ้านไร้นาม',
+  'world.hub.start.lore': 'หมู่บ้านเล็ก ๆ ริมขอบแดนเถื่อน ไม่มีกำแพง ไม่มีนาม ไม่มีสิ่งใดค้ำประกันว่าพรุ่งนี้จะยังตั้งอยู่ ทว่ามันคือจุดเริ่มต้นของการเดินทางที่ไม่มีที่สิ้นสุด ที่ยังจุดไฟไว้รอผู้เดินทางกลับมา',
   'world.hub.start.rested': 'ไฟกองเล็ก ๆ กลางหมู่บ้านให้ความอบอุ่นพอจะฟื้นแรงกาย',
 
   // ---- World Map Viewer (macro layer, ui.js) ----

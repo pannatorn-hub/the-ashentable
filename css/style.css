@@ -1,6 +1,6 @@
 /* ==========================================================================
-   The Ashen Table — stylesheet (v2)
-   Direction: stylized painterly fantasy UI (AFK Journey-inspired) — soft
+   The Ashen Table โ€” stylesheet (v2)
+   Direction: stylized painterly fantasy UI (AFK Journey-inspired) โ€” soft
    radial-gradient "painted" backgrounds, gold-trimmed ornate frames on
    panels and portraits, frosted-glass overlays for HUD/cards. Warmer and
    more polished than a flat dark theme; still avoiding the generic
@@ -96,7 +96,7 @@ body {
 
 #app { position: relative; z-index: 1; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 24px 16px 60px; }
 
-/* Ornate gold-framed glass panel — the signature visual element used
+/* Ornate gold-framed glass panel โ€” the signature visual element used
    throughout: HUD, cards, class-select, portraits. */
 .frame-panel {
   position: relative;
@@ -204,7 +204,7 @@ h3 { font-family: var(--font-display); font-size: 1.05rem; margin: 0 0 8px; }
 .skill-legend { background: rgba(30, 26, 42, 0.7); border: 1px solid var(--slate-500); border-radius: var(--radius-card); padding: 18px 24px; max-width: 480px; }
 .legend-note { color: var(--parchment-dim); font-size: 0.85rem; margin: 0 0 10px; }
 .skill-legend ul { list-style: none; padding: 0; margin: 0; text-align: left; display: grid; gap: 7px; font-size: 0.88rem; }
-.skill-legend li::before { content: '›'; color: var(--verdigris-bright); margin-right: 8px; }
+.skill-legend li::before { content: 'โ€บ'; color: var(--verdigris-bright); margin-right: 8px; }
 
 /* ---------------- Zone map ---------------- */
 
@@ -298,6 +298,12 @@ h3 { font-family: var(--font-display); font-size: 1.05rem; margin: 0 0 8px; }
 /* v9.1 */
 .save-warning.save-recovered { color: var(--verdigris-bright, #7fd0b8); background: rgba(62, 142, 126, 0.16); border-color: rgba(62, 142, 126, 0.55); }
 .takeover-shell { text-align: center; }
+/* v9.2 โ€” cleared ground is walkable, and reads as walkable */
+.map-node.cleared.available { cursor: pointer; opacity: 0.72; }
+.map-node.cleared.available:hover { opacity: 1; }
+.map-node.behind { border-style: dashed; box-shadow: none; }
+.map-node.behind .node-icon { opacity: 0.55; }
+.boss-gate .menu-actions { flex-wrap: wrap; gap: 10px; }
 .loot-actions { display: flex; gap: 8px; }
 
 .portrait-large { margin: 8px 0 20px; }
@@ -436,12 +442,12 @@ h3 { font-family: var(--font-display); font-size: 1.05rem; margin: 0 0 8px; }
   --legendary: #e8c25c;
 }
 
-/* Cursed / Legendary item chips — a darker, warning-coded variant of the
+/* Cursed / Legendary item chips โ€” a darker, warning-coded variant of the
    existing rarity-colored .item-chip. */
 .item-chip.cursed-item { border-color: var(--curse); box-shadow: 0 0 10px rgba(139, 26, 61, 0.4); }
 .item-curse { font-size: 0.76rem; color: var(--curse-bright); font-style: italic; margin: 2px 0 8px; }
 
-/* Zone hazard badge — a small overlay on a micro-map node (Isra's sight lets these show early). */
+/* Zone hazard badge โ€” a small overlay on a micro-map node (Isra's sight lets these show early). */
 .map-node.has-hazard { border-color: var(--ember); }
 .hazard-badge {
   position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%;
@@ -464,7 +470,7 @@ h3 { font-family: var(--font-display); font-size: 1.05rem; margin: 0 0 8px; }
 .hidden-skill-card.dormant h3 { color: var(--slate-500); letter-spacing: 0.3em; }
 .class-hidden-teaser { font-size: 0.72rem; color: var(--slate-500); margin: 0; }
 
-/* Hidden-skill / second-wind / reflect awaken banner — a brief overlay above the current screen */
+/* Hidden-skill / second-wind / reflect awaken banner โ€” a brief overlay above the current screen */
 .awaken-banner {
   width: 100%; max-width: 720px; display: flex; align-items: center; gap: 14px;
   background: linear-gradient(180deg, rgba(224, 185, 89, 0.16), rgba(20, 18, 28, 0.94));

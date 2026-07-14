@@ -333,7 +333,7 @@ export function dangerMultiplier(dangerTier) {
 const TIER_MULT = { [NodeType.NORMAL]: 1, [NodeType.HARD]: 1.3, [NodeType.ELITE]: 1.7, [NodeType.LORD]: 2.3 };
 
 export function generateEnemyForNode(node, zone, playerLevel) {
-  const scale = (TIER_MULT[node.type] || 1) * dangerMultiplier(zone.dangerTier) * depthMultiplier(node.depth) * (1 + (playerLevel - 1) * 0.06);
+  const scale = (TIER_MULT[node.type] || 1) * dangerMultiplier(zone.dangerTier) * depthMultiplier(node.depth) * (1 + (playerLevel - 1) * 0.06)*0.5;
   const wobble = () => 0.85 + Math.random() * 0.3;
   const isLord = node.type === NodeType.LORD;
 

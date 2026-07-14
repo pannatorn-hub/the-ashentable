@@ -122,7 +122,7 @@ const GLYPHS = {
 };
 
 export class GameController {
-  constructor({ user, auth, savedState, root, leaderboard = null, saveFn = null }) {
+  constructor({ user, auth, savedState, root, leaderboard = null, saveFn = null, recoveredFromMirror = false }) {
     this.user = user;
     this.auth = auth;
     this.root = root;
@@ -186,6 +186,11 @@ export class GameController {
     this.renameDraft = '';
     this.linkStatus = null;     // null | 'working' | 'error' — Settings' Link Account flow
     this.saveError = null;      // v9: last save failure, surfaced in the HUD instead of swallowed
+    // v9.1 SAVE LIFECYCLE — the "time rewind" killers:
+    this.destroyed = false;         // a destroyed controller must never write a save again
+    this._pendingState = null;      // newest state waiting for the async backend
+    this._savingNow = false;        // one in-flight backend write at a time (ordered, coalesced)
+    this.recoveryNotice = recoveredFromMirror; // boot found the local mirror ahead of the cloud
 
     // v6:
     this.smugglerStock = null;      // the current Wandering Smuggler encounter's offer
@@ -197,12 +202,16 @@ export class GameController {
     this.battleMounted = false;     // true while the battle DOM must NOT be rebuilt
     this.animRefs = null;           // live element refs into the mounted battle DOM
 
-    this.root.addEventListener('click', (e) => this.handleClick(e));
+    // v9.1: abortable, so destroy() can actually silence this controller.
+    // Before this, every boot() left the previous controller's listener alive —
+    // a zombie with stale state, persisting the past over the present.
+    this._abort = new AbortController();
+    this.root.addEventListener('click', (e) => this.handleClick(e), { signal: this._abort.signal });
     this.render();
   }
 
   persist() {
-    if (!this.player) return;
+    if (!this.player || this.destroyed) return;
     this.player.maxCP = Math.max(this.player.maxCP || 0, this.player.combatPower);
     const state = {
       player: this.player.toJSON(),
@@ -216,14 +225,20 @@ export class GameController {
       },
       savedAt: Date.now(),
     };
-    // v9: a failed write used to vanish into console.error — which looks
-    // EXACTLY like "my progress reset" on the next reload. Now it's visible.
-    Promise.resolve(this.saveFn(this.user.id, state))
-      .then(() => { if (this.saveError) { this.saveError = null; this.render(); } })
-      .catch((err) => {
-        console.error('save failed', err);
-        if (!this.saveError) { this.saveError = err.message || String(err); this.render(); }
-      });
+    // v9.1 (1/2) SYNCHRONOUS MIRROR. localStorage.setItem completes before
+    // this line returns — so the instant a monster dies or a point is spent,
+    // the save is already on disk. Navigating away, closing the tab, or a
+    // dropped network write can no longer lose it: boot() picks the newest
+    // of mirror-vs-cloud. (In local/guest mode saveFn IS the mirror.)
+    if (this.saveFn !== saveGameState) {
+      try { saveGameState(this.user.id, state); } catch (err) { console.warn('mirror write failed', err); }
+    }
+
+    // v9.1 (2/2) COALESCED, ORDERED BACKEND QUEUE. Only one write in flight;
+    // rapid persist() bursts collapse to the latest state. An older snapshot
+    // can never land after (and overwrite) a newer one.
+    this._pendingState = state;
+    this._drainSaves();
     if (this.leaderboard) {
       Promise.resolve(this.leaderboard.submit({
         userId: this.user.id, name: this.player.name, classId: this.player.classId,
@@ -306,12 +321,53 @@ export class GameController {
     }
   }
 
+  /** v9.1: one in-flight backend write; always ships the newest pending state. */
+  _drainSaves() {
+    if (this._savingNow || !this._pendingState || this.destroyed) return;
+    const state = this._pendingState;
+    this._pendingState = null;
+    this._savingNow = true;
+    Promise.resolve(this.saveFn(this.user.id, state))
+      .then(() => { if (this.saveError) { this.saveError = null; this.render(); } })
+      .catch((err) => {
+        // Still visible (v9) — but the mirror above means even a dead cloud
+        // write no longer costs the player their progress on this device.
+        console.error('save failed', err);
+        if (!this.saveError) { this.saveError = err.message || String(err); this.render(); }
+      })
+      .finally(() => { this._savingNow = false; this._drainSaves(); });
+  }
+
+  /** v9.1: silence this controller forever — no clicks, no renders, no saves. */
+  destroy() {
+    this.destroyed = true;
+    if (this._abort) this._abort.abort();
+  }
+
+  /**
+   * v9.1: another tab took over this save. Freezing (instead of racing) is
+   * what prevents the classic multi-tab rewind: a stale tab quietly writing
+   * yesterday's state over today's.
+   */
+  freeze() {
+    this.destroy();
+    this.root.innerHTML = `
+      <div class="auth-shell takeover-shell">
+        <h2>${t('session.takeover.title')}</h2>
+        <p class="tagline">${t('session.takeover.body')}</p>
+        <button class="btn btn-primary" id="takeover-reload">${t('session.takeover.reload')}</button>
+      </div>`;
+    const btn = this.root.querySelector('#takeover-reload');
+    if (btn) btn.addEventListener('click', () => window.location.reload());
+  }
+
   goTo(screen) {
     // v7: leaving the battle screen (any path: victory, defeat, PvP result,
     // permadeath, even mid-battle HUD navigation) releases the stable mount
     // so the next render is a normal full rebuild. Entering 'battle' leaves
     // battleMounted false — render() will build once and then mountBattle().
     if (screen !== 'battle') { this.battleMounted = false; this.animRefs = null; }
+    if (this.recoveryNotice && screen !== this.screen) this.recoveryNotice = false; // v9.1: shown until the player moves on
     this.screen = screen;
     this.render();
   }
@@ -1068,6 +1124,7 @@ export class GameController {
   // ================= Rendering =================
 
   render() {
+    if (this.destroyed) return; // v9.1: a frozen/replaced controller must never repaint (or resurrect) the game UI
     // v7 STABLE MOUNT GUARD: while the battle DOM is mounted, a full
     // innerHTML rebuild would kill every animation mid-flight and orphan
     // this.animRefs. All per-turn battle updates go through patchBattleHud()
@@ -1076,7 +1133,8 @@ export class GameController {
     // v6: a Hidden Unique Skill awakening banner, shown once above whatever screen is current.
     const awakenBanner = this.hiddenAwakenNotice ? this.renderAwakenBanner() : '';
     const saveWarn = this.saveError ? `<div class="save-warning">${t('save.failed', { err: this.saveError })}</div>` : '';
-    this.root.innerHTML = `${this.screen === 'create_character' ? '' : this.renderHud()}${saveWarn}${awakenBanner}<main class="screen">${this.renderScreen()}</main>`;
+    const recovered = this.recoveryNotice ? `<div class="save-warning save-recovered">${t('save.recovered')}</div>` : '';
+    this.root.innerHTML = `${this.screen === 'create_character' ? '' : this.renderHud()}${saveWarn}${recovered}${awakenBanner}<main class="screen">${this.renderScreen()}</main>`;
     if (this.screen === 'battle') this.mountBattle();
   }
 

@@ -580,14 +580,40 @@ export class GameController {
   }
 
   // ---------------- Zone / node selection (micro layer) ----------------
+// --- โค้ดที่เพิ่มใหม่: คำนวณทางเดินแบบอิสระ (ไป-กลับ และออกข้าง) ---
+  getBidirectionalAvailableNodes(zone) {
+    const available = new Set();
+    const allNodes = zone.floors.flat();
+    
+    // ถ้าเพิ่งเข้าด่านมาใหม่ ให้เข้าด่านแรกสุดได้
+    if (!this.currentNodeId) {
+      if (zone.floors.length > 0) {
+        zone.floors[0].forEach(n => available.add(n.id));
+      }
+      return available;
+    }
 
+    const currentNode = allNodes.find(n => n.id === this.currentNodeId);
+    if (!currentNode) return available;
+
+    // เช็กเส้นเชื่อมทั้งเดินหน้าและถอยหลัง
+    allNodes.forEach(targetNode => {
+      const isForward = currentNode.connectsTo && currentNode.connectsTo.includes(targetNode.id);
+      const isBackward = targetNode.connectsTo && targetNode.connectsTo.includes(currentNode.id);
+      if (isForward || isBackward) {
+        available.add(targetNode.id);
+      }
+    });
+    return available;
+  }
+  // ----------------------------------------------------
   selectNode(nodeId) {
     const zone = this.currentZone();
     const node = findNode(zone, nodeId);
     if (!node) return;
     // v9.2: `available` now includes cleared nodes BEHIND the player, so
     // walking back over ground you've already taken is legal movement.
-    const available = getAvailableNodeIds(zone, this.currentNodeId);
+    const available = this.getBidirectionalAvailableNodes(zone);
     const visible = computeVisibleNodeIds(zone, this.currentNodeId, this.player.visionRange);
     if (!available.has(nodeId) || !visible.has(nodeId)) return;
 
@@ -1372,7 +1398,7 @@ export class GameController {
 
   renderZone() {
     const zone = this.currentZone();
-    const available = getAvailableNodeIds(zone, this.currentNodeId);
+    const available = this.getBidirectionalAvailableNodes(zone);
     const visible = computeVisibleNodeIds(zone, this.currentNodeId, this.player.visionRange);
     const currentNode = this.currentNodeId ? findNode(zone, this.currentNodeId) : null;
     const typeMeta = {

@@ -54,7 +54,7 @@
 //      gone. doRename() is unchanged and still fires from there.
 // ---------------------------------------------------------------------------
 
-import { t } from './i18n.js';
+import { t, setLanguage } from './i18n.js';
 import { Player, ALL_STATS, className, classTagline, signatureName, signatureDesc, STARTING_HEARTS } from './player.js';
 import { CLASS_DEFINITIONS, hiddenSkillName, hiddenSkillDesc, hiddenSkillHint, checkHiddenUnlock } from './classes.js';
 import { LegacyManager } from './legacy.js';
@@ -167,6 +167,191 @@ export class GameController {
     this.screen = this.player ? this.placeScreen() : 'create_character';
     // v9: only sanctuaries heal you. Reloading mid-expedition no longer works
     // as a free full-heal exploit — HP persists exactly as the save left it.
+    if (this.player && this.place.kind !== 'field') this.player.hp = this.player.getStats().maxHp;
+
+    this.battleState = null;
+    this.activeNode = null;
+    this.lastResult = null;
+    this.pvpMode = false;
+    this.pendingMatchType = null;
+    this.lbSortBy = 'maxCP';
+    this.lbEntries = null;
+    this.shopStock = null;
+    this.activeNpcId = null;
+    this.selectedBagItemId = null;
+    this.npcNotice = null;
+    this.pendingLoot = null;    // loot awaiting an equip/take/discard decision
+    this.renameError = null;
+    this.renameSuccess = null;
+    this.renameDraft = '';
+    this.linkStatus = null;     // null | 'working' | 'error' — Settings' Link Account flow
+    this.saveError = null;      // v9: last save failure, surfaced in the HUD instead of swallowed
+    // v9.1 SAVE LIFECYCLE — the "time rewind" killers:
+    this.destroyed = false;         // a destroyed controller must never write a save again
+    this._pendingState = null;      // newest state waiting for the async backend
+    this._savingNow = false;        // one in-flight backend write at a time (ordered, coalesced)
+    this.recoveryNotice = recoveredFromMirror; // boot found the local mirror ahead of the cloud
+
+    // v6:
+    this.smugglerStock = null;      // the current Wandering Smuggler encounter's offer
+    this.ambushNode = null;         // set while a Campfire Ambush fight is being resolved
+    this.prowlerNode = null;        // v9.2: set while re-fighting a wanderer on an already-cleared node
+    this.hiddenAwakenNotice = null; // { id } — a Hidden Unique Skill just awakened; shown once, then dismissed
+
+    // v7: the animation layer and the stable battle mount's bookkeeping.
+    this.animator = new AnimationManager();
+    this.battleMounted = false;     // true while the battle DOM must NOT be rebuilt
+    this.animRefs = null;           // live element refs into the mounted battle DOM
+
+    // v9.1: abortable, so destroy() can actually silence this controller.
+    // Before this, every boot() left the previous controller's listener alive —
+    // a zombie with stale state, persisting the past over the present.
+    this._abort = new AbortController();
+    this.root.addEventListener('click', (e) => this.handleClick(e), { signal: this._abort.signal });
+    this.render();
+  }
+
+  persist() {
+    if (!this.player || this.destroyed) return;
+    this.player.maxCP = Math.max(this.player.maxCP || 0, this.player.combatPower);
+    const state = {
+      player: this.player.toJSON(),
+      world: this.world,            // boss kills + unlocked roads live in here
+      legacy: this.legacyManager.toJSON(),
+      run: {                        // v9: where you are, and where you respawn
+        place: this.place,
+        currentZoneIndex: this.currentZoneIndex,
+        currentNodeId: this.currentNodeId,
+        checkpoint: this.checkpoint,
+      },
+      savedAt: Date.now(),
+    };
+    // v9.1 (1/2) SYNCHRONOUS MIRROR. localStorage.setItem completes before
+    // this line returns — so the instant a monster dies or a point is spent,
+    // the save is already on disk. Navigating away, closing the tab, or a
+    // dropped network write can no longer lose it: boot() picks the newest
+    // of mirror-vs-cloud. (In local/guest mode saveFn IS the mirror.)
+    if (this.saveFn !== saveGameState) {
+      try { saveGameState(this.user.id, state); } catch (err) { console.warn('mirror write failed', err); }
+    }
+
+    // v9.1 (2/2) COALESCED, ORDERED BACKEND QUEUE. Only one write in flight;
+    // rapid persist() bursts collapse to the latest state. An older snapshot
+    // can never land after (and overwrite) a newer one.
+    this._pendingState = state;
+    this._drainSaves();
+    if (this.leaderboard) {
+      Promise.resolve(this.leaderboard.submit({
+        userId: this.user.id, name: this.player.name, classId: this.player.classId,
+        maxCP: this.player.maxCP, maxZone: this.player.maxZone,
+      })).catch((err) => console.error('leaderboard submit failed', err));
+    }
+  }
+
+  handleClick(e) {
+    // v7 input lock: while a combat replay is playing, every data-action is
+    // swallowed (skill spam, HUD nav, everything). Tapping the arena to
+    // fast-forward uses a direct listener from mountBattle, not data-action,
+    // so it passes right through this lock.
+    if (this.animator.playing) return;
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const a = btn.dataset;
+    switch (a.action) {
+      case 'pick-class': this.selectedClassId = a.class; this.render(); break;
+      case 'confirm-create': this.confirmCreateCharacter(); break;
+      case 'capital': this.goTo('capital'); break;
+      case 'goto-worldmap': this.goTo('worldmap'); break;
+      case 'worldmap-back': this.goTo(this.placeScreen()); break;
+      case 'macro-select-node': this.selectMacroNode(a.macro); break;
+      case 'select-node': this.selectNode(a.node); break;
+      case 'retreat': this.retreat(); break;
+      case 'use-gate': this.useCapitalGate(); break;
+      case 'town-continue': this.continueFromTown(); break;
+      case 'town-to-capital': this.arriveNearestHub(true); break;
+      case 'goto-shop': this.openShop(); break;
+      case 'buy': this.buyFromShop(Number(a.index)); break;
+      case 'sell-bag-item': this.sellBagItem(a.item); break;
+      case 'goto-town-from-shop': this.goTo('town'); break;
+      case 'goto-npc': this.activeNpcId = a.npc; this.npcNotice = null; this.goTo('npc'); break;
+      case 'npc-back': this.goTo(this.placeScreen()); break;
+      case 'npc-upgrade-bag': this.doNpcService('bag'); break;
+      case 'npc-upgrade-vision': this.doNpcService('vision'); break;
+      case 'npc-reforge': this.doNpcService('reforge'); break;
+      case 'npc-cleanse-curse': this.doCleanseCurse(a.item); break; // v6
+      case 'goto-bag': this.selectedBagItemId = null; this.goTo('bag'); break;
+      case 'bag-select': this.selectedBagItemId = a.item; this.render(); break;
+      case 'bag-close-compare': this.selectedBagItemId = null; this.render(); break;
+      case 'bag-equip': this.equipFromBag(a.item); break;
+      case 'bag-sell': this.sellBagItem(a.item); break;
+      case 'bag-back': this.goTo(this.placeScreen()); break;
+      case 'unequip': this.unequipToBag(a.slot); break;
+      case 'goto-travel': this.goTo('travel'); break;
+      case 'travel-to': this.travelTo(a.dest); break;
+      case 'travel-back': this.goTo(this.placeScreen()); break;
+      case 'goto-allocate': this.goTo('allocate'); break;
+      case 'allocate-stat': this.player.allocateStatPoint(a.stat); this.checkHiddenAwakening(); this.persist(); this.render(); break;
+      case 'allocate-done': this.goTo(this.placeScreen()); break;
+      case 'skill': this.playerChooseSkill(a.skill); break;
+      case 'rename-confirm': this.doRename(); break; // v6: fired from the Settings panel now
+      case 'loot-equip': this.decideLoot('equip'); break;
+      case 'loot-take': this.decideLoot('take'); break;
+      case 'loot-discard': this.decideLoot('discard'); break;
+      case 'altar-yes': this.resolveAltar(true); break;
+      case 'altar-no': this.resolveAltar(false); break;
+      case 'continue-node': this.finishNodeResult(); break;
+      case 'advance-next': this.advanceToMacroNode(a.macro); break; // v9: post-boss "walk on" choice
+      case 'goto-leaderboard': this.openLeaderboard(); break;
+      case 'lb-sort': this.lbSortBy = a.by; this.openLeaderboard(); break;
+      case 'lb-back': this.goTo('capital'); break;
+      case 'pvp': this.enterPvPQueue(); break;
+      case 'revive': this.reviveWithNewCharacter(); break;
+      case 'goto-settings': this.linkStatus = null; this.renameError = null; this.renameSuccess = null; this.renameDraft = ''; this.goTo('settings'); break;
+      case 'settings-back': this.goTo(this.placeScreen()); break;
+      case 'link-account': this.linkAccount(); break;
+      case 'logout': this.auth.logout(); window.location.reload(); break;
+      // v10: bilingual TH/EN toggle — setLanguage() persists to localStorage;
+      // re-rendering the current screen (not goTo, screen doesn't change) is
+      // enough since every renderX() reads strings through t() fresh, live.
+      case 'change-language': setLanguage(a.lang); this.render(); break;
+      // v6: The Wandering Smuggler's black market
+      case 'smuggler-back': this.goTo(this.placeScreen()); break;
+      case 'smuggler-buy': this.buyFromSmuggler(Number(a.index)); break;
+      case 'smuggler-buy-heart': this.purchaseSmugglerHeart(); break;
+      // v6: Hidden Unique Skill awakening banner
+      case 'dismiss-awaken': this.hiddenAwakenNotice = null; this.render(); break;
+      // v8: the Runesmith strikes the anvil — passives wake permanently.
+      case 'unlock-passives': this.player.passivesUnlocked = true; this.persist(); this.goTo('town'); break;
+      default: break;
+    }
+  }
+
+  /** v9.1: one in-flight backend write; always ships the newest pending state. */
+  _drainSaves() {
+    if (this._savingNow || !this._pendingState || this.destroyed) return;
+    const state = this._pendingState;
+    this._pendingState = null;
+    this._savingNow = true;
+    Promise.resolve(this.saveFn(this.user.id, state))
+      .then(() => { if (this.saveError) { this.saveError = null; this.render(); } })
+      .catch((err) => {
+        // Still visible (v9) — but the mirror above means even a dead cloud
+        // write no longer costs the player their progress on this device.
+        console.error('save failed', err);
+        if (!this.saveError) { this.saveError = err.message || String(err); this.render(); }
+      })
+      .finally(() => { this._savingNow = false; this._drainSaves(); });
+  }
+
+  /** v9.1: silence this controller forever — no clicks, no renders, no saves. */
+  destroy() {
+    this.destroyed = true;
+    if (this._abort) this._abort.abort();
+  }
+
+  /**
+   * v9.1: another tab took over this save. Freezing (instead of racing) is
+   * what prevents the classic multi-tab rewind:e save left it.
     if (this.player && this.place.kind !== 'field') this.player.hp = this.player.getStats().maxHp;
 
     this.battleState = null;

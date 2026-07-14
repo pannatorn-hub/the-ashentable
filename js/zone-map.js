@@ -360,7 +360,7 @@ export function findNode(zone, nodeId) {
  * you. Backtracking is free movement through ground you've already taken —
  * you can never retreat into an uncleared node (that would skip its fight).
  */
-eexport function getAvailableNodeIds(zone, currentNodeId) {
+export function getAvailableNodeIds(zone, currentNodeId) {
     const available = new Set();
     const allNodes = zone.floors.flat(); // ดึง Node ทั้งหมดในแมพมาไว้รวมกัน
 

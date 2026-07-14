@@ -11,7 +11,7 @@
 // ---------------------------------------------------------------------------
 
 import { t } from './i18n.js';
-import { LocalStorageAuthProvider, loadGameState, saveGameState } from './auth.js';
+import { LocalStorageAuthProvider, loadGameState, saveGameState, pickNewestSave } from './auth.js';
 import { LocalLeaderboardService } from './leaderboard.js';
 import { GameController } from './gameController.js';
 import { initParallax, initAmbientDrift } from './parallax.js';
@@ -148,8 +148,41 @@ function renderLanding() {
 
 // ---------------- Boot ----------------
 
+// v9.1 SINGLE-TAB CLAIM. Booting stamps this tab's token; every OTHER open
+// tab hears the storage event and freezes itself. A frozen tab can never
+// persist stale state over live progress — the classic multi-tab rewind.
+const ACTIVE_TAB_KEY = 'ashen_active_tab';
+const TAB_TOKEN = `tab_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+
+window.addEventListener('storage', (e) => {
+  if (e.key === ACTIVE_TAB_KEY && e.newValue && e.newValue !== TAB_TOKEN && window.gameController) {
+    window.gameController.freeze();
+  }
+});
+
 async function boot(user, svc) {
-  const savedState = await svc.loadFn(user.id);
+  // v9.1: exactly one live controller. onAuthChanged can fire more than once
+  // per page life; before this, each fire stacked another controller (and
+  // another click listener) onto #app — every zombie a time-rewind machine.
+  if (window.gameController && typeof window.gameController.destroy === 'function') {
+    window.gameController.destroy();
+  }
+
+  // v9.1 NEWEST-SAVE RECOVERY. The cloud copy can trail reality (a write
+  // that was in flight when the last page unloaded simply died). persist()
+  // now mirrors every save synchronously to localStorage, so boot compares
+  // both by savedAt and plays the newer one — then heals the cloud.
+  const [cloudState, mirrorState] = await Promise.all([
+    Promise.resolve(svc.loadFn(user.id)).catch((err) => { console.warn('cloud load failed', err); return null; }),
+    loadGameState(user.id),
+  ]);
+  const savedState = pickNewestSave(cloudState, mirrorState);
+  const recoveredFromMirror = !!(savedState && mirrorState && savedState === mirrorState
+    && (mirrorState.savedAt || 0) > (cloudState?.savedAt || 0));
+  if (recoveredFromMirror && svc.saveFn !== saveGameState) {
+    Promise.resolve(svc.saveFn(user.id, savedState)).catch((err) => console.warn('cloud heal failed', err));
+  }
+
   window.gameController = new GameController({
     user,
     auth: svc.auth,
@@ -157,7 +190,9 @@ async function boot(user, svc) {
     root,
     leaderboard: svc.leaderboard,
     saveFn: svc.saveFn,
+    recoveredFromMirror,
   });
+  localStorage.setItem(ACTIVE_TAB_KEY, TAB_TOKEN); // claim AFTER a successful boot
 }
 
 function bootGuest() {

@@ -239,36 +239,138 @@ export function liveBossNodes(zone) {
 }
 
 /**
- * v9 SAVE MIGRATION. Pre-v9 zones have a single Lord with no `macroTarget`,
- * so `defeatedLords` could never fill and the macro roads out could never
- * open. Rather than regenerate the world (which would wipe exploration), we
- * flag the region as legacy-gated: its already-dead Lord unlocks every road,
- * exactly like an outer region. New regions are unaffected.
+ * v9.2 BOSS/ROAD SYNCHRONISER — the single source of truth for "one Lord per
+ * road out". Idempotent: safe to run at boot, after world generation, and
+ * again whenever the macro layer grows new roads (outer frontier expansion,
+ * where a region's roads are created *after* the region itself).
+ *
+ * It does four things:
+ *   1. records the region's roads (`zone.exits`);
+ *   2. stamps a `macroTarget` on every Lord that lacks one;
+ *   3. GROWS new Lord nodes when roads outnumber Lords (this is what repairs
+ *      pre-v9.2 saves, where every region had exactly one unmapped Lord);
+ *   4. honours history — a Lord already killed under the old rules keeps his
+ *      kill, and the roads he was guarding stay open (no progress is ever
+ *      taken back, and nobody is asked to refight a boss they beat).
+ *
+ * Returns true if anything changed.
  */
-export function migrateBossGating(zone, macroChildren = []) {
-  if (!Array.isArray(zone.defeatedLords)) zone.defeatedLords = [];
-  if (!Array.isArray(zone.exits)) zone.exits = macroChildren.slice();
-  const lords = zone.floors.flat().filter((n) => n.type === NodeType.LORD);
-  const needsMigration = lords.some((n) => n.macroTarget === undefined);
-  if (!needsMigration) return false;
-  for (const n of lords) {
-    if (n.macroTarget === undefined) n.macroTarget = null;
-    if (n.bossSlain === undefined) n.bossSlain = !!(zone.lordDefeated && n.cleared);
+export function syncZoneBosses(zone, macroChildren = []) {
+  const children = macroChildren.map(String);
+  let changed = false;
+
+  if (!Array.isArray(zone.defeatedLords)) { zone.defeatedLords = []; changed = true; }
+  if (!Array.isArray(zone.exits) || zone.exits.join('|') !== children.join('|')) {
+    zone.exits = children.slice();
+    changed = true;
   }
-  zone.legacyBossGating = true;
-  return true;
+
+  const lordFloor = zone.floors[zone.floors.length - 1];
+  const lords = zone.floors.flat().filter((n) => n.type === NodeType.LORD);
+
+  // (4) LEGACY AMNESTY, computed BEFORE we touch anything: a pre-v9.2 region
+  // whose single unmapped Lord is already dead earned every road he stood on.
+  const hadUnmappedLord = lords.some((n) => n.macroTarget === undefined || n.macroTarget === null);
+  const legacyKill = hadUnmappedLord && zone.lordDefeated
+    && lords.some((n) => n.macroTarget == null && (n.bossSlain || n.cleared));
+
+  // (2) stamp targets onto existing Lords, never stealing one already taken.
+  const taken = new Set(lords.map((n) => n.macroTarget).filter(Boolean));
+  const free = children.filter((c) => !taken.has(c));
+  for (const lord of lords) {
+    if (lord.bossSlain === undefined) { lord.bossSlain = false; changed = true; }
+    if (lord.macroTarget == null && free.length) {
+      lord.macroTarget = free.shift();
+      changed = true;
+    } else if (lord.macroTarget === undefined) {
+      lord.macroTarget = null; // a dead-end region's Lord guards no road — legitimate
+      changed = true;
+    }
+  }
+
+  // (3) grow a Lord for every road still unguarded.
+  for (const target of free) {
+    const node = {
+      id: nextNodeId(), depth: zone.floors.length - 1, index: lordFloor.length,
+      type: NodeType.LORD, cleared: false, connectsTo: [], capitalGate: false, hazard: null,
+      macroTarget: target, bossSlain: false,
+    };
+    lordFloor.push(node);
+    // Wire him in: every node on the floor above gains an edge to him, so he
+    // is always reachable no matter which path the player walked down.
+    for (const parent of zone.floors[zone.floors.length - 2]) {
+      if (!parent.connectsTo.includes(node.id)) parent.connectsTo.push(node.id);
+    }
+    changed = true;
+  }
+
+  if (legacyKill) {
+    // Every Lord of this region counts as already slain, and every road he
+    // guarded opens. The freshly-grown Lords above are included: the player
+    // beat this region under the old one-boss rules and keeps that victory.
+    for (const lord of zone.floors.flat().filter((n) => n.type === NodeType.LORD)) {
+      lord.bossSlain = true;
+    }
+    for (const c of children) {
+      if (!zone.defeatedLords.includes(c)) zone.defeatedLords.push(c);
+    }
+    zone.legacyBossGating = true;
+    changed = true;
+  } else if (zone.legacyBossGating === undefined) {
+    zone.legacyBossGating = false;
+    changed = true;
+  }
+
+  return changed;
+}
+
+/** v9 name, kept so older call sites keep working. */
+export const migrateBossGating = syncZoneBosses;
+
+// ---------------- v9.2: node clearing, backtracking, prowlers ----------------
+
+/**
+ * Chance that a CLEARED node still has something wandering on it when the
+ * player walks back over it. The region's danger tier raises it, but it stays
+ * low everywhere: backtracking is meant to be a route, not a toll booth.
+ */
+export function prowlerChance(zone) {
+  return Math.min(0.22, 0.06 + Math.max(0, zone.dangerTier) * 0.02);
+}
+
+export function rollProwler(zone, node) {
+  if (!node || !node.cleared) return false;
+  if (!COMBAT_TYPES.has(effectiveNodeType(node))) return false; // towns, campfires, altars: never
+  if (isLiveBossNode(node)) return false;                        // an unbeaten Lord is not a prowler
+  return Math.random() < prowlerChance(zone);
+}
+
+/** Every node with an edge INTO this one — i.e. the way you came. */
+export function parentIdsOf(zone, nodeId) {
+  return zone.floors.flat().filter((n) => n.connectsTo.includes(nodeId)).map((n) => n.id);
 }
 
 export function findNode(zone, nodeId) {
   return zone.floors.flat().find((n) => n.id === nodeId) || null;
 }
 
-/** Selectable next nodes: entrance floor when standing nowhere, otherwise the current node's forward edges. */
+/**
+ * Selectable nodes: the entrance floor when standing outside, otherwise the
+ * current node's forward edges PLUS (v9.2) every already-cleared node behind
+ * you. Backtracking is free movement through ground you've already taken —
+ * you can never retreat into an uncleared node (that would skip its fight).
+ */
 export function getAvailableNodeIds(zone, currentNodeId) {
   if (!currentNodeId) return new Set(zone.entranceIds);
   const current = findNode(zone, currentNodeId);
   if (!current) return new Set(zone.entranceIds);
-  return new Set(current.connectsTo);
+
+  const ids = new Set(current.connectsTo);              // forward: the crawl continues
+  for (const parentId of parentIdsOf(zone, currentNodeId)) {
+    const parent = findNode(zone, parentId);
+    if (parent && parent.cleared) ids.add(parentId);    // backward: only over ground already won
+  }
+  return ids;
 }
 
 /**
@@ -281,6 +383,9 @@ export function computeVisibleNodeIds(zone, currentNodeId, visionRange = 1) {
   const all = zone.floors.flat();
   for (const n of all) if (n.cleared) visible.add(n.id);
   if (zone.townDiscovered) visible.add(zone.townNodeId);
+
+  // v9.2: the road behind you is never fogged again.
+  if (currentNodeId) parentIdsOf(zone, currentNodeId).forEach((id) => visible.add(id));
 
   let frontier = currentNodeId ? [currentNodeId] : [...zone.entranceIds];
   if (!currentNodeId) frontier.forEach((id) => visible.add(id));

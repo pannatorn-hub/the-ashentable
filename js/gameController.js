@@ -607,29 +607,34 @@ export class GameController {
     return available;
   }
   // ----------------------------------------------------
-  selectNode(nodeId) {
+ selectNode(nodeId) {
     const zone = this.currentZone();
     const node = findNode(zone, nodeId);
     if (!node) return;
-    // v9.2: `available` now includes cleared nodes BEHIND the player, so
-    // walking back over ground you've already taken is legal movement.
-    const available = this.getBidirectionalAvailableNodes(zone);
+    
+    // ตรงนี้คือฟังก์ชันที่คุณแก้ไปรอบที่แล้ว ให้ใช้ของที่คุณมีอยู่ได้เลย
+    const available = this.getBidirectionalAvailableNodes(zone); 
     const visible = computeVisibleNodeIds(zone, this.currentNodeId, this.player.visionRange);
     if (!available.has(nodeId) || !visible.has(nodeId)) return;
 
     this.activeNode = node;
 
+    // --- เริ่มแก้ตรงนี้ ---
     // v9.2: A CLEARED NODE STAYS CLEARED for the rest of the expedition.
-    // Walking back onto it is free passage — no forced rematch. The only
-    // exception is a low roll for a wandering Prowler (see prowlerChance:
-    // 6% at tier 0, capped at 22% in the deep). The node keeps its cleared
-    // flag either way, so the ground never has to be re-won.
     if (node.cleared) {
       this.currentNodeId = node.id;
+      
+      // 🌟 โค้ดที่เพิ่มใหม่: ถ้าด่านที่เคยเคลียร์แล้ว เป็นประเภท TOWN ให้พาเข้าเมืองเลย
+      if (node.type === NodeType.TOWN) {
+        this.arriveTown(zone.index);
+        return; 
+      }
+      // 🌟 จบโค้ดที่เพิ่มใหม่
+
       if (rollProwler(zone, node)) {
         const fightNode = { ...node, type: effectiveNodeType(node) };
         const enemy = generateEnemyForNode(fightNode, zone, this.player.level);
-        this.prowlerNode = node; // marks this fight as a re-encounter, not a first clear
+        this.prowlerNode = node; 
         this.battleState = startBattle(this.player, enemy, patternedBotPicker(SkillType.QUICK_STRIKE, 0.4), { fullHeal: false, hazard: node.hazard || null });
         this.pvpMode = false;
         this.goTo('battle');
@@ -639,7 +644,6 @@ export class GameController {
       this.goTo('zone');
       return;
     }
-
     if (node.type === NodeType.TOWN) { this.arriveTown(zone.index); return; }
     if (node.type === NodeType.ALTAR) { this.goTo('altar_event'); return; }
     if (node.type === NodeType.CAMPFIRE) {

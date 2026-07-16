@@ -100,6 +100,7 @@ export async function initFirebase() {
     limit: fsMod.limit,
     getDocs: fsMod.getDocs,
     serverTimestamp: fsMod.serverTimestamp,
+    runTransaction: fsMod.runTransaction, // v11: Highlander unique-class claims
   };
 
   return { app, auth, db };
@@ -232,4 +233,87 @@ export async function findPvpOpponent(myUid, myCP, tolerance = 0.15) {
   if (!candidates.length) return null;
   candidates.sort((a, b) => Math.abs(a.maxCP - myCP) - Math.abs(b.maxCP - myCP));
   return candidates[0];
+}
+
+
+// ======================= 7) v11: ACCOUNT LEDGER SYNC =======================
+// The progression.js account ledger (permadeath-surviving event counters
+// that gate Secret/Unique classes) mirrors to `accounts/{uid}`. Merge
+// discipline lives in progression.mergeAccounts (per-counter MAX) — this
+// layer only moves bytes.
+
+export async function saveAccountData(uid, account) {
+  requireInit();
+  await fns.setDoc(fns.doc(db, 'accounts', uid), {
+    account: JSON.stringify(account),
+    updatedAt: fns.serverTimestamp(),
+  });
+}
+
+export async function loadAccountData(uid) {
+  requireInit();
+  const snap = await fns.getDoc(fns.doc(db, 'accounts', uid));
+  if (!snap.exists()) return null;
+  try { return JSON.parse(snap.data().account); } catch { return null; }
+}
+
+// ======================= 8) v11: HIGHLANDER UNIQUE-CLASS REGISTRY =======================
+// Server-wide rule: each of the 10 Unique classes has AT MOST ONE holder at
+// a time, arbitrated by a Firestore TRANSACTION so two players racing for
+// the same throne can never both sit on it. One doc per class in
+// `uniqueClasses/{classId}`: { holderUid, holderName, claimedAt } or
+// holderUid: null when the throne is empty.
+//
+// Interface is byte-identical to progression.js's LocalUniqueRegistry, so
+// GameController swaps arbitration backends without touching call sites.
+//
+// SECURITY NOTE (same status as Heart deduction / loot rolls): the client
+// calling release() on its own permadeath is honest-client enforcement.
+// Real enforcement = Firestore security rules forbidding a claim where
+// holderUid != null, plus a Cloud Function performing the permadeath strip
+// server-side. Listed as future work with the rest of the
+// server-authoritative migration.
+
+export class FirebaseUniqueRegistry {
+  async fetchAll() {
+    requireInit();
+    const snap = await fns.getDocs(fns.collection(db, 'uniqueClasses'));
+    const out = {};
+    snap.docs.forEach((d) => { out[d.id] = d.data().holderUid ? d.data() : null; });
+    return out;
+  }
+
+  /** Atomically claim a throne. Fails softly with the current holder if occupied. */
+  async claim(classId, uid, name) {
+    requireInit();
+    const ref = fns.doc(db, 'uniqueClasses', classId);
+    try {
+      await fns.runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        const cur = snap.exists() ? snap.data() : null;
+        if (cur && cur.holderUid && cur.holderUid !== uid) {
+          throw Object.assign(new Error('occupied'), { holder: cur });
+        }
+        tx.set(ref, { holderUid: uid, holderName: name, claimedAt: Date.now() });
+      });
+      return { ok: true };
+    } catch (err) {
+      if (err && err.holder) return { ok: false, holder: err.holder };
+      throw err; // network/permission errors bubble up — caller decides
+    }
+  }
+
+  /** Return the throne to the pool. Only the current holder can release it. */
+  async release(classId, uid) {
+    requireInit();
+    const ref = fns.doc(db, 'uniqueClasses', classId);
+    await fns.runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      const cur = snap.exists() ? snap.data() : null;
+      if (cur && cur.holderUid === uid) {
+        tx.set(ref, { holderUid: null, holderName: null, claimedAt: null });
+      }
+    });
+    return { ok: true };
+  }
 }

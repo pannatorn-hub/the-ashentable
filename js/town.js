@@ -7,7 +7,7 @@
 // the world the destination lies. Zero DOM dependencies.
 // ---------------------------------------------------------------------------
 
-import { generateLoot, salvageValue, createEquipment, EquipmentSlot } from './equipment.js';
+import { generateLoot, salvageValue, createEquipment, EquipmentSlot, rollLootSlot } from './equipment.js';
 import { peddlerStock, npcsAt } from './npc.js';
 
 const SHOP_STOCK_SIZE = 4;
@@ -39,9 +39,8 @@ export function generateShopStock(zoneIndex, playerLevel) {
   if (hasPeddler) {
     return peddlerStock(playerLevel).map((item) => ({ item, price: buyPrice(item, playerLevel, PEDDLER_MARKUP) }));
   }
-  const slots = Object.values(EquipmentSlot);
   return Array.from({ length: SHOP_STOCK_SIZE }, () => {
-    const item = createEquipment(slots[Math.floor(Math.random() * slots.length)], playerLevel);
+    const item = createEquipment(rollLootSlot(), playerLevel); // v11: weighted slots — accessories rare here too
     return { item, price: buyPrice(item, playerLevel) };
   });
 }

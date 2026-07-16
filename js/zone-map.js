@@ -457,7 +457,14 @@ export function dangerMultiplier(dangerTier) {
 const TIER_MULT = { [NodeType.NORMAL]: 1, [NodeType.HARD]: 1.3, [NodeType.ELITE]: 1.7, [NodeType.LORD]: 2.3 };
 
 export function generateEnemyForNode(node, zone, playerLevel) {
-  const scale = (TIER_MULT[node.type] || 1) * dangerMultiplier(zone.dangerTier) * depthMultiplier(node.depth) * (1 + (playerLevel - 1) * 0.06)*0.5;
+  // v10 ENEMY SCALING REVAMP: enemy base stats are FIXED by the zone
+  // (dangerTier x depth x node type). The player's level now adds only a
+  // whisper of scaling — +1.2% per level, hard-capped at +36% (level 31+) —
+  // instead of the old uncapped +6%/level. Out-level a zone and you SHOULD
+  // crush it; the world's difficulty lives in the world, not in you.
+  // (The trailing *0.5 is Pan's global enemy-stat nerf — preserved.)
+  const levelBump = 1 + Math.min(playerLevel - 1, 30) * 0.012;
+  const scale = (TIER_MULT[node.type] || 1) * dangerMultiplier(zone.dangerTier) * depthMultiplier(node.depth) * levelBump * 0.5;
   const wobble = () => 0.85 + Math.random() * 0.3;
   const isLord = node.type === NodeType.LORD;
 

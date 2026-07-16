@@ -20,7 +20,7 @@
 // ---------------------------------------------------------------------------
 
 import { t } from './i18n.js';
-import { CLASS_DEFINITIONS } from './classes.js';
+import { CLASS_DEFINITIONS, resolveClassDef } from './classes.js';
 
 // Backward-compat re-export: every v5 file that imported CLASS_DEFINITIONS
 // from player.js keeps working. New code should import from classes.js.
@@ -46,7 +46,7 @@ function nextId(prefix = 'player') { _uid += 1; return `${prefix}_${Date.now()}_
 
 export class Player {
   constructor({ name, classId, legacyBonus = null }) {
-    const def = CLASS_DEFINITIONS[classId];
+    const def = resolveClassDef(classId); // v11: default, secret, or unique class
     if (!def) throw new Error(`Unknown class: ${classId}`);
 
     this.id = nextId();
@@ -80,7 +80,18 @@ export class Player {
     this.maxCP = 0;    // leaderboard: highest CP ever reached
     this.maxZone = 1;  // leaderboard: deepest zone reached (1-based)
 
-    this.equipment = { weapon: null, armor: null, accessory: null };
+    // v11: the full 8-slot paper-doll. 'armor' is the chest (legacy id).
+    this.equipment = {
+      weapon: null, head: null, armor: null, legs: null, boots: null,
+      ring: null, necklace: null, bracelet: null,
+    };
+
+    // v11: PvP economy + Sanity Curse (late-game forced-PvP tax)
+    this.pvpPoints = 0;
+    this.pvpWins = 0;
+    this.pvpMatches = 0;
+    this.sanityCursed = false;  // set once by progression.checkSanityOnset — never unset
+    this.lastPvpAt = null;      // ms timestamp of the last arena bout (win OR loss)
 
     this.hearts = STARTING_HEARTS;
     this.isDead = false;
@@ -219,15 +230,42 @@ export class Player {
       renameCount: this.renameCount,
       hiddenAwakened: this.hiddenAwakened,
       passivesUnlocked: this.passivesUnlocked,
+      // v11:
+      pvpPoints: this.pvpPoints, pvpWins: this.pvpWins, pvpMatches: this.pvpMatches,
+      sanityCursed: this.sanityCursed, lastPvpAt: this.lastPvpAt,
     };
   }
 
   static fromJSON(data) {
-    const def = CLASS_DEFINITIONS[data.classId];
+    const def = resolveClassDef(data.classId); // v11: default, secret, or unique
     const p = Object.create(Player.prototype);
     Object.assign(p, data);
     p.baseStats = { ...data.baseStats };
-    p.equipment = { ...data.equipment };
+
+    // v11-save migration: 3-slot saves -> 8-slot paper-doll. The chest kept
+    // the legacy id 'armor', so it carries over untouched. An old equipped
+    // 'accessory' is re-homed into ring/necklace/bracelet by its base name
+    // (the old accessory bases were exactly those three items).
+    const LEGACY_ACC = { 'item.ring': 'ring', 'item.amulet': 'necklace', 'item.charm': 'bracelet' };
+    const old = data.equipment || {};
+    p.equipment = {
+      weapon: old.weapon || null, head: old.head || null, armor: old.armor || null,
+      legs: old.legs || null, boots: old.boots || null,
+      ring: old.ring || null, necklace: old.necklace || null, bracelet: old.bracelet || null,
+    };
+    if (old.accessory) {
+      const item = old.accessory;
+      const home = LEGACY_ACC[item.baseNameKey] || 'ring';
+      item.slot = home;
+      if (!p.equipment[home]) p.equipment[home] = item;
+      else if (Array.isArray(data.bag)) data.bag.push(item); // slot somehow taken — drop it in the bag
+    }
+    // Bag items minted before v11 with slot 'accessory' get re-homed the same way.
+    if (Array.isArray(data.bag)) {
+      for (const item of data.bag) {
+        if (item && item.slot === 'accessory') item.slot = LEGACY_ACC[item.baseNameKey] || 'ring';
+      }
+    }
     p.signature = def ? def.signature : null;
     p.portrait = def ? def.portrait : { tint: '#888780', glyph: 'sword' };
     p.maxCP = data.maxCP || 0;
@@ -242,6 +280,12 @@ export class Player {
     p.renameCount = data.renameCount || 0;
     p.hiddenAwakened = !!data.hiddenAwakened;        // v6-save migration
     p.passivesUnlocked = !!data.passivesUnlocked;    // v8-save migration: old saves default to dormant
+    // v11-save migration:
+    p.pvpPoints = data.pvpPoints || 0;
+    p.pvpWins = data.pvpWins || 0;
+    p.pvpMatches = data.pvpMatches || 0;
+    p.sanityCursed = !!data.sanityCursed;
+    p.lastPvpAt = data.lastPvpAt ?? null;
     return p;
   }
 }

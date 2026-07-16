@@ -56,7 +56,11 @@
 
 import { t, setLanguage } from './i18n.js';
 import { Player, ALL_STATS, className, classTagline, signatureName, signatureDesc, STARTING_HEARTS } from './player.js';
-import { CLASS_DEFINITIONS, hiddenSkillName, hiddenSkillDesc, hiddenSkillHint, checkHiddenUnlock } from './classes.js';
+import {
+  CLASS_DEFINITIONS, hiddenSkillName, hiddenSkillDesc, hiddenSkillHint, checkHiddenUnlock,
+  SECRET_CLASS_DEFINITIONS, UNIQUE_CLASS_DEFINITIONS, unlockedSecretClasses, qualifiedUniqueClasses,
+  isUniqueClass, resolveClassDef,
+} from './classes.js'; // v11: the three class tiers
 import { LegacyManager } from './legacy.js';
 import { Matchmaker } from './matchmaking.js';
 import { startBattle, playerAct, patternedBotPicker, SkillType, SKILL_LIBRARY, skillName, skillDesc, getEffectiveStats, SIG_GAUGE_MAX } from './combat.js';
@@ -75,6 +79,7 @@ import {
 import {
   generateLoot, salvageValue, passiveName, passiveDesc,
   createEquipment, createCursedEquipment, EquipmentSlot, Rarity, curseName, curseDesc,
+  rollLootSlot, PVP_SET, createPvpSetItem, // v11
 } from './equipment.js';
 import { executeSacrifice } from './altar.js';
 import { saveGameState, isGuest, migrateGuestToFirebase } from './auth.js';
@@ -90,6 +95,10 @@ import {
 import { generateShopStock, sellPrice, travelDestinations, travelCost } from './town.js';
 import { worldMapNavButton, settingsNavButton, renderWorldMapViewer, renderSettingsPanel } from './ui.js';
 import { AnimationManager } from './animationManager.js';
+import {
+  loadAccount, saveAccount, recordEvent, awardPvpPoints, spendPvpPoints,
+  checkSanityOnset, applySanityTax, sanityTimeLeft, LocalUniqueRegistry,
+} from './progression.js'; // v11
 
 const NODE_REWARDS = {
   [NodeType.NORMAL]: { winXp: 35, loseXp: 10 },
@@ -122,12 +131,23 @@ const GLYPHS = {
 };
 
 export class GameController {
-  constructor({ user, auth, savedState, root, leaderboard = null, saveFn = null, recoveredFromMirror = false }) {
+  constructor({ user, auth, savedState, root, leaderboard = null, saveFn = null, recoveredFromMirror = false, uniqueRegistry = null, saveAccountFn = null }) {
     this.user = user;
     this.auth = auth;
     this.root = root;
     this.leaderboard = leaderboard;
     this.saveFn = saveFn || saveGameState;
+
+    // v11: the permadeath-surviving account ledger (secret/unique class
+    // gates) + the Highlander arbiter. Both are backend-agnostic: main.js
+    // hands us the Firestore versions when linked, the local ones otherwise.
+    this.account = loadAccount();
+    this.uniqueRegistry = uniqueRegistry || new LocalUniqueRegistry();
+    this.saveAccountFn = saveAccountFn; // cloud mirror for the ledger, or null in local mode
+    this.uniqueHolders = null;          // fetched registry snapshot for the creation screen
+    this.createError = null;            // unique-class claim races surface here
+    this.pvpShopNotice = null;          // 'ok' | 'noPoints' | 'bagFull'
+    this.sanityNotice = null;           // { kind: 'onset' } | { kind: 'tax', heartsLost, died } — shown once
 
     this.legacyManager = savedState?.legacy ? LegacyManager.fromJSON(savedState.legacy) : new LegacyManager();
     this.matchmaker = new Matchmaker();
@@ -208,6 +228,34 @@ export class GameController {
     // a zombie with stale state, persisting the past over the present.
     this._abort = new AbortController();
     this.root.addEventListener('click', (e) => this.handleClick(e), { signal: this._abort.signal });
+
+    // v11 SANITY CURSE — settle the tax the moment the save opens. Days
+    // missed while the game was closed are claimed here, one Heart per full
+    // day, and a chained debt CAN permadeath the character on the spot
+    // (progression.applySanityTax stops at 0 hearts; the standard
+    // Legacy/Tombstone flow takes over). Onset is also checked: a save from
+    // before v11 that is already past the threshold gets afflicted now,
+    // with its first full free day starting from this boot.
+    if (this.player && !this.player.isDead) {
+      if (checkSanityOnset(this.player)) this.sanityNotice = { kind: 'onset' };
+      const tax = applySanityTax(this.player);
+      if (tax.heartsLost > 0) this.sanityNotice = { kind: 'tax', heartsLost: tax.heartsLost, died: tax.died };
+      if (tax.died) {
+        this.legacyManager.recordDeath(this.player);
+        this.releaseUniqueIfHeld(); // the throne returns to the pool
+        this.screen = 'permadeath';
+      }
+      if (this.sanityNotice) this.persist();
+    }
+    // A coarse in-session ticker: refreshes the HUD countdown and settles a
+    // deadline that passes while the tab sits open. Never fires during a
+    // mounted battle (the stable-mount rule), and dies with destroy().
+    this._sanityTimer = setInterval(() => this.sanityTick(), 30000);
+
+    // v11: entering the game with no character means the creation screen —
+    // prefetch which unique thrones are occupied so the Apex section is live.
+    if (!this.player) this.refreshUniqueHolders();
+
     this.render();
   }
 
@@ -305,6 +353,11 @@ export class GameController {
       case 'lb-sort': this.lbSortBy = a.by; this.openLeaderboard(); break;
       case 'lb-back': this.goTo('capital'); break;
       case 'pvp': this.enterPvPQueue(); break;
+      // v11: Arena Warden's PvP-point shop
+      case 'goto-pvpshop': this.pvpShopNotice = null; this.goTo('pvpshop'); break;
+      case 'pvpshop-buy': this.buyFromPvpShop(a.entry); break;
+      // v11: Sanity Curse banner
+      case 'dismiss-sanity': this.sanityNotice = null; this.render(); break;
       case 'revive': this.reviveWithNewCharacter(); break;
       case 'goto-settings': this.linkStatus = null; this.renameError = null; this.renameSuccess = null; this.renameDraft = ''; this.goTo('settings'); break;
       case 'settings-back': this.goTo(this.placeScreen()); break;
@@ -347,6 +400,7 @@ export class GameController {
   destroy() {
     this.destroyed = true;
     if (this._abort) this._abort.abort();
+    if (this._sanityTimer) clearInterval(this._sanityTimer); // v11
   }
 
   /**
@@ -391,15 +445,45 @@ export class GameController {
 
   // ---------------- Character creation ----------------
 
-  confirmCreateCharacter() {
+  async confirmCreateCharacter() {
     const nameInput = document.getElementById('char-name-input');
     const name = nameInput ? nameInput.value.trim() : '';
     if (!this.selectedClassId || !name) return;
+    this.createError = null;
+
+    // v11: server-side truth check — a locked class id smuggled into
+    // selectedClassId (devtools) is refused here, not just hidden in the UI.
+    const classId = this.selectedClassId;
+    if (SECRET_CLASS_DEFINITIONS[classId] && !unlockedSecretClasses(this.account).includes(classId)) return;
+    if (UNIQUE_CLASS_DEFINITIONS[classId]) {
+      if (!qualifiedUniqueClasses(this.account).includes(classId)) return;
+      // THE HIGHLANDER CLAIM: an atomic, race-safe grab at the throne.
+      // Firestore transaction when linked, localStorage locally — losing
+      // the race is a normal outcome, surfaced calmly, never thrown.
+      try {
+        const res = await this.uniqueRegistry.claim(classId, this.user.id, name);
+        if (!res.ok) {
+          this.createError = t('create.unique.taken', { name: (res.holder && res.holder.holderName) || '?' });
+          this.refreshUniqueHolders();
+          this.render();
+          return;
+        }
+      } catch (err) {
+        console.error('unique claim failed', err);
+        this.createError = t('create.unique.claimError');
+        this.render();
+        return;
+      }
+    }
+
     const legacyBonus = this.legacyManager.createHeirBonus();
-    this.player = new Player({ name, classId: this.selectedClassId, legacyBonus });
+    this.player = new Player({ name, classId, legacyBonus });
+    if (legacyBonus) { recordEvent(this.account, 'legacyChildren'); this.persistAccount(); } // v11: raising an heir is a gate
     this.world = generateWorld(); // Start Village ('start') is marked visited by generateWorld() itself
     this.place = { kind: 'hub', hubId: this.world.macro.startId };
     this.checkHiddenAwakening(); // v6: a generous Legacy bonus could in principle cross a threshold immediately
+    // v11: an heir built on a monstrous legacy could already be past the Sanity threshold.
+    if (checkSanityOnset(this.player)) this.sanityNotice = { kind: 'onset' };
     this.persist();
     this.goTo('capital');
   }
@@ -408,6 +492,8 @@ export class GameController {
     this.selectedClassId = null;
     this.player = null;
     this.world = null;
+    this.createError = null;
+    this.refreshUniqueHolders(); // v11: the Apex section needs a fresh occupancy snapshot
     this.goTo('create_character');
   }
 
@@ -489,6 +575,7 @@ export class GameController {
     if (triggerSmugglerEncounter(this.world.macro, this.world, String(zoneIndex))) {
       this.smugglerStock = smugglerStock(this.player.level);
       this.npcNotice = null;
+      recordEvent(this.account, 'smugglerMet'); this.persistAccount(); // v11: meeting her is itself a gate
       this.persist(); // her relocation is world state — worth saving even if the player backs out immediately
       this.goTo('smuggler');
       return;
@@ -870,6 +957,14 @@ export class GameController {
       }
       unlockedMacroId = node.macroTarget || null;
       this.player.maxZone = Math.max(this.player.maxZone || 1, zone.index + 1);
+      // v11: the ledger remembers every fallen Lord — these counters gate
+      // the Secret and Unique classes, and they survive permadeath.
+      recordEvent(this.account, 'lordKills');
+      if ((zone.dangerTier || 0) >= 6) recordEvent(this.account, 'lordKillsTier6');
+      if ((zone.dangerTier || 0) >= 8) recordEvent(this.account, 'lordKillsTier8');
+      this.persistAccount();
+      // v11: pushing deeper can cross the Sanity threshold mid-run.
+      if (checkSanityOnset(this.player)) this.sanityNotice = { kind: 'onset' };
     }
 
     if (isAmbush) {
@@ -891,10 +986,9 @@ export class GameController {
     this.goTo('node_result');
   }
 
-  /** v6: a uniformly random equipment slot — used for guaranteed ambush/cursed drops that don't come from generateLoot's own slot roll. */
+  /** v6/v11: a random equipment slot for guaranteed ambush/cursed drops — now weighted, so accessory scarcity holds everywhere loot is minted. */
   randomSlot() {
-    const slots = Object.values(EquipmentSlot);
-    return slots[Math.floor(Math.random() * slots.length)];
+    return rollLootSlot();
   }
 
   /**
@@ -949,6 +1043,7 @@ export class GameController {
   resolveAltar(accept) {
     const outcome = accept ? executeSacrifice(this.player) : null;
     this.lastResult = { kind: 'altar', boon: outcome };
+    if (outcome) { recordEvent(this.account, 'altarSacrifices'); this.persistAccount(); } // v11
     if (outcome) this.checkHiddenAwakening(); // v6: +25% to every stat can absolutely cross a threshold
     this.markNodeCleared(this.activeNode);
     this.goTo('event_result');
@@ -1005,6 +1100,20 @@ export class GameController {
     this.render();
   }
 
+  /** v11: Arena Warden purchase — points-gated, bag-space-gated, forged at the buyer's level. */
+  buyFromPvpShop(entryId) {
+    const entry = PVP_SET.find((e) => e.id === entryId);
+    if (!entry) return;
+    if ((this.player.pvpPoints || 0) < entry.cost) { this.pvpShopNotice = 'noPoints'; this.render(); return; }
+    if (this.player.bag.length >= bagCapacity(this.player)) { this.pvpShopNotice = 'bagFull'; this.render(); return; }
+    const item = createPvpSetItem(entry.id, this.player.level);
+    if (!item || !addToBag(this.player, item)) { this.pvpShopNotice = 'bagFull'; this.render(); return; }
+    spendPvpPoints(this.player, entry.cost);
+    this.pvpShopNotice = 'ok';
+    this.persist();
+    this.render();
+  }
+
   travelTo(dest) {
     const destination = dest === 'capital' ? { kind: 'capital' } : { kind: 'town', zoneIndex: Number(dest) };
     const cost = travelCost(destination.kind === 'capital' ? 'capital' : { zoneIndex: destination.zoneIndex });
@@ -1021,6 +1130,7 @@ export class GameController {
     else if (service === 'vision') result = upgradeVision(this.player);
     else if (service === 'reforge') result = reforgeWeapon(this.player);
     this.npcNotice = result ? 'ok' : 'fail';
+    if (result && service === 'reforge') { recordEvent(this.account, 'reforges'); this.persistAccount(); } // v11
     if (result) { this.checkHiddenAwakening(); this.persist(); } // v6: a reforge can push a stat over a threshold too
     this.render();
   }
@@ -1041,6 +1151,7 @@ export class GameController {
     if (!item) return;
     const result = performCleanseCurse(this.player, item);
     this.npcNotice = result ? 'ok' : 'fail';
+    if (result) { recordEvent(this.account, 'cleansedCurses'); this.persistAccount(); } // v11: Vesper's hidden service is a secret-class gate
     // v6: removing e.g. speedHalf/dodgeSeal can itself push a total stat over a hidden-skill threshold.
     if (result) { this.checkHiddenAwakening(); this.persist(); }
     this.render();
@@ -1059,6 +1170,7 @@ export class GameController {
     if (!hidden) return false;
     this.player.hiddenAwakened = true;
     this.hiddenAwakenNotice = { id: hidden.id };
+    recordEvent(this.account, 'hiddenAwakenings'); this.persistAccount(); // v11
     return true;
   }
 
@@ -1078,8 +1190,59 @@ export class GameController {
   purchaseSmugglerHeart() {
     const result = buyHeartFromSmuggler(this.player);
     this.npcNotice = result ? 'ok' : 'fail';
+    if (result) { recordEvent(this.account, 'smugglerHeartBought'); this.persistAccount(); } // v11
     if (result) this.persist();
     this.render();
+  }
+
+  // ---------------- v11: account ledger / Highlander / Sanity plumbing ----------------
+
+  /** Cloud-mirror the ledger (recordEvent already wrote it locally). Fire-and-forget, like the leaderboard. */
+  persistAccount() {
+    saveAccount(this.account);
+    if (this.saveAccountFn) {
+      Promise.resolve(this.saveAccountFn(this.user.id, this.account))
+        .catch((err) => console.warn('account cloud mirror failed', err));
+    }
+  }
+
+  /** If this character sits on a Unique throne, return it to the server pool. Fire-and-forget: the strip must never block the death flow. */
+  releaseUniqueIfHeld() {
+    if (!this.player || !isUniqueClass(this.player.classId)) return;
+    const classId = this.player.classId;
+    Promise.resolve(this.uniqueRegistry.release(classId, this.user.id))
+      .catch((err) => console.error('unique class release failed', err));
+  }
+
+  /** Creation-screen prefetch: which Apex thrones are currently occupied. */
+  refreshUniqueHolders() {
+    this.uniqueHolders = null;
+    Promise.resolve(this.uniqueRegistry.fetchAll())
+      .then((reg) => { this.uniqueHolders = reg || {}; if (this.screen === 'create_character') this.render(); })
+      .catch(() => { this.uniqueHolders = {}; if (this.screen === 'create_character') this.render(); });
+  }
+
+  /**
+   * In-session Sanity heartbeat (30s): settles a deadline that passes while
+   * the tab sits open and keeps the HUD countdown honest. Skipped while a
+   * battle is mounted — the stable-mount rule owns that DOM.
+   */
+  sanityTick() {
+    if (this.destroyed || !this.player || this.player.isDead || !this.player.sanityCursed) return;
+    if (this.screen === 'battle' && this.battleMounted) return;
+    const tax = applySanityTax(this.player);
+    if (tax.heartsLost > 0) {
+      this.sanityNotice = { kind: 'tax', heartsLost: tax.heartsLost, died: tax.died };
+      if (tax.died) {
+        this.legacyManager.recordDeath(this.player);
+        this.releaseUniqueIfHeld();
+        this.persist();
+        this.goTo('permadeath');
+        return;
+      }
+      this.persist();
+    }
+    this.render(); // countdown chip refresh
   }
 
   // ---------------- PvP (arena in the Capital, unchanged rules) ----------------
@@ -1106,11 +1269,19 @@ export class GameController {
     let justDied = false;
     if (!won) { heartsLeft = this.player.loseHeart(); justDied = this.player.isDead; }
 
-    this.lastResult = { kind: 'pvp', won, opponent: bs.enemy, matchType: this.pendingMatchType, heartsLeft, justDied };
+    // v11: the bout pays PvP Points either way (a loss pays a trickle — the
+    // Sanity tax shouldn't punish twice), stamps the account ledger's
+    // win/match totals, and feeds the curse's 24h clock in one call.
+    const ptsEarned = awardPvpPoints(this.player, this.account, won);
+    this.persistAccount();
+    this.sanityNotice = null; // fighting IS the cure — clear any lingering warning
+
+    this.lastResult = { kind: 'pvp', won, opponent: bs.enemy, matchType: this.pendingMatchType, heartsLeft, justDied, ptsEarned };
     this.pvpMode = false;
 
     if (justDied) {
       this.legacyManager.recordDeath(this.player);
+      this.releaseUniqueIfHeld(); // v11 HIGHLANDER PENALTY: permadeath in PvP strips the throne back into the pool
       this.persist();
       this.goTo('permadeath');
     } else {
@@ -1184,9 +1355,10 @@ export class GameController {
     if (this.screen === 'battle' && this.battleMounted) return;
     // v6: a Hidden Unique Skill awakening banner, shown once above whatever screen is current.
     const awakenBanner = this.hiddenAwakenNotice ? this.renderAwakenBanner() : '';
+    const sanityBanner = this.sanityNotice ? this.renderSanityBanner() : ''; // v11
     const saveWarn = this.saveError ? `<div class="save-warning">${t('save.failed', { err: this.saveError })}</div>` : '';
     const recovered = this.recoveryNotice ? `<div class="save-warning save-recovered">${t('save.recovered')}</div>` : '';
-    this.root.innerHTML = `${this.screen === 'create_character' ? '' : this.renderHud()}${saveWarn}${recovered}${awakenBanner}<main class="screen">${this.renderScreen()}</main>`;
+    this.root.innerHTML = `${this.screen === 'create_character' ? '' : this.renderHud()}${saveWarn}${recovered}${sanityBanner}${awakenBanner}<main class="screen">${this.renderScreen()}</main>`;
     if (this.screen === 'battle') this.mountBattle();
   }
 
@@ -1251,6 +1423,32 @@ export class GameController {
       </div>`;
   }
 
+  /** v11: the Sanity Curse banner — onset ritual text, or the toll of missed days. */
+  renderSanityBanner() {
+    const n = this.sanityNotice;
+    const body = n.kind === 'onset'
+      ? t('sanity.onset.body')
+      : n.died ? t('sanity.tax.died', { n: n.heartsLost }) : t('sanity.tax.body', { n: n.heartsLost });
+    return `
+      <div class="sanity-banner ${n.kind === 'tax' ? 'sanity-banner-tax' : ''}">
+        <span class="awaken-icon">🕯</span>
+        <div class="awaken-text">
+          <b>${n.kind === 'onset' ? t('sanity.onset.title') : t('sanity.tax.title')}</b><br/>
+          ${body}
+        </div>
+        <button class="btn btn-tiny" data-action="dismiss-sanity">${t('hidden.awakened.dismiss')}</button>
+      </div>`;
+  }
+
+  /** v11: hh:mm left until the curse next feeds. */
+  sanityCountdownLabel() {
+    const ms = sanityTimeLeft(this.player);
+    if (ms === null) return '';
+    const h = Math.floor(ms / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    return `${h}:${String(m).padStart(2, '0')}`;
+  }
+
   renderHud() {
     const p = this.player;
     const s = p.getStats();
@@ -1263,6 +1461,8 @@ export class GameController {
         <div class="hud-block hud-hp">HP <b>${p.hp}</b>/${s.maxHp}</div>
         <div class="hud-block hud-hearts">${hearts}</div>
         <div class="hud-block hud-resources">${t('hud.gold', { n: p.gold })}</div>
+        ${(p.pvpPoints || 0) > 0 ? `<div class="hud-block hud-pvp-points">${t('hud.pvpPoints', { n: p.pvpPoints })}</div>` : ''}
+        ${p.sanityCursed && !p.isDead ? `<div class="hud-block hud-sanity" title="${t('sanity.hud.tip')}">🕯 ${this.sanityCountdownLabel()}</div>` : ''}
         ${p.statPoints > 0 ? `<button class="btn btn-tiny btn-primary" data-action="goto-allocate">${t('hud.points', { n: p.statPoints })}</button>` : ''}
         <nav class="hud-nav">
           <button class="btn btn-tiny" data-action="goto-bag">${t('hud.gear')}</button>
@@ -1286,9 +1486,18 @@ export class GameController {
         <circle cx="50" cy="36" r="15" fill="url(#pg-${portrait.glyph})"/>
         <path d="M28 84 Q50 58 72 84 L72 92 L28 92 Z" fill="url(#pg-${portrait.glyph})" opacity="0.8"/>
         <path d="${glyph}" fill="#f1e8d6" opacity="0.9" transform="translate(14 26) scale(0.55)"/>
-        <rect x="20" y="80" width="12" height="8" rx="3" fill="${slotColor('accessory')}"/>
-        <rect x="68" y="80" width="12" height="8" rx="3" fill="${slotColor('weapon')}"/>
-        <rect x="38" y="72" width="24" height="10" rx="4" fill="${slotColor('armor')}" opacity="0.85"/>
+        <!-- v11 paper-doll: 8 gear indicators. Head band / chest plate / leg
+             plate / boot pair frame the figure; weapon at the right hand;
+             ring, necklace, bracelet as small jewels down the left. -->
+        <rect x="40" y="20" width="20" height="5" rx="2.5" fill="${slotColor('head')}" opacity="0.9"/>
+        <rect x="38" y="70" width="24" height="9" rx="4" fill="${slotColor('armor')}" opacity="0.85"/>
+        <rect x="40" y="81" width="20" height="6" rx="3" fill="${slotColor('legs')}" opacity="0.85"/>
+        <rect x="41" y="89" width="8" height="5" rx="2" fill="${slotColor('boots')}"/>
+        <rect x="51" y="89" width="8" height="5" rx="2" fill="${slotColor('boots')}"/>
+        <rect x="70" y="76" width="10" height="14" rx="3" fill="${slotColor('weapon')}"/>
+        <circle cx="24" cy="70" r="4" fill="${slotColor('ring')}"/>
+        <circle cx="22" cy="80" r="4" fill="${slotColor('necklace')}"/>
+        <circle cx="26" cy="90" r="4" fill="${slotColor('bracelet')}"/>
       </svg>
     `;
   }
@@ -1312,6 +1521,7 @@ export class GameController {
       case 'event_result': return this.renderEventResult();
       case 'altar_event': return this.renderAltarScreen();
       case 'awaken_event': return this.renderAwakenEvent(); // v8
+      case 'pvpshop': return this.renderPvpShop(); // v11
       case 'pvp_searching': return this.renderSearching();
       case 'pvp_result': return this.renderPvpResult();
       case 'permadeath': return this.renderPermadeath();
@@ -1320,25 +1530,89 @@ export class GameController {
     }
   }
 
+  /** One selectable class card — shared by all three tiers. */
+  renderClassCard(c, { tierBadge = '' } = {}) {
+    return `
+      <button class="class-card ${this.selectedClassId === c.id ? 'selected' : ''} ${c.tier ? `tier-${c.tier}` : ''}" data-action="pick-class" data-class="${c.id}">
+        ${tierBadge}
+        <div class="class-card-head">${this.renderPortrait(c.portrait, null, 52)}<div><h3>${className(c.id)}</h3><p class="class-tagline">${classTagline(c.id)}</p></div></div>
+        <ul class="class-stats">
+          <li>${t('stat.maxHp')} ${c.baseStats.maxHp}</li><li>${t('stat.atk')} ${c.baseStats.atk}</li>
+          <li>${t('stat.def')} ${c.baseStats.def}</li><li>${t('stat.speed')} ${c.baseStats.speed}</li>
+        </ul>
+        <p class="class-signature"><b>${signatureName(c.signature.id)}:</b> ${signatureDesc(c.signature.id)}</p>
+      </button>
+    `;
+  }
+
+  /** A still-locked Secret class: nameless silhouette + a cryptic hint. The mystery IS the content. */
+  renderLockedCard(classId) {
+    return `
+      <div class="class-card class-locked">
+        <div class="class-card-head">
+          <svg width="52" height="52" viewBox="0 0 100 100" class="portrait-svg" aria-hidden="true">
+            <circle cx="50" cy="50" r="48" fill="#14121c" stroke="#2a2438" stroke-width="1.5"/>
+            <circle cx="50" cy="36" r="15" fill="#221e30"/>
+            <path d="M28 84 Q50 58 72 84 L72 92 L28 92 Z" fill="#221e30"/>
+            <text x="50" y="58" text-anchor="middle" fill="#56506a" font-size="30">?</text>
+          </svg>
+          <div><h3>???</h3><p class="class-tagline">${t('create.locked')}</p></div>
+        </div>
+        <p class="class-hint">${t(`class.${classId}.hint`)}</p>
+      </div>
+    `;
+  }
+
   renderCreateCharacter() {
     const classes = Object.values(CLASS_DEFINITIONS);
     const legacyNote = this.legacyManager.hasLegacy() ? `<p class="legend-note">${t('create.legacyNote')}</p>` : '';
+
+    // v11 SECRET TIER: earned ones are pickable; the rest sit as locked
+    // silhouettes with cryptic hints — visible proof there is more to find.
+    const secretIds = new Set(unlockedSecretClasses(this.account));
+    const secretCards = Object.values(SECRET_CLASS_DEFINITIONS).map((c) =>
+      secretIds.has(c.id)
+        ? this.renderClassCard(c, { tierBadge: `<span class="tier-badge tier-badge-secret">${t('create.tier.secret')}</span>` })
+        : this.renderLockedCard(c.id)
+    ).join('');
+
+    // v11 APEX TIER: shown ONLY once the account qualifies for at least one
+    // (ultra-secret — no silhouettes, no hints, no section at all before
+    // then). Occupied thrones show their current holder and are unpickable.
+    const qualified = qualifiedUniqueClasses(this.account);
+    let apexSection = '';
+    if (qualified.length > 0) {
+      const holders = this.uniqueHolders; // null while the registry fetch is in flight
+      const apexCards = qualified.map((id) => {
+        const c = UNIQUE_CLASS_DEFINITIONS[id];
+        const holder = holders ? holders[id] : undefined;
+        if (holders && holder && holder.holderUid && holder.holderUid !== this.user.id) {
+          return `
+            <div class="class-card class-locked tier-unique">
+              <span class="tier-badge tier-badge-unique">${t('create.tier.unique')}</span>
+              <div class="class-card-head">${this.renderPortrait(c.portrait, null, 52)}<div><h3>${className(c.id)}</h3><p class="class-tagline">${classTagline(c.id)}</p></div></div>
+              <p class="class-hint">${t('create.unique.holder', { name: holder.holderName || '?' })}</p>
+            </div>`;
+        }
+        return this.renderClassCard(c, { tierBadge: `<span class="tier-badge tier-badge-unique">${t('create.tier.unique')}</span>` });
+      }).join('');
+      apexSection = `
+        <h2 class="create-tier-title tier-title-unique">${t('create.unique.title')}</h2>
+        <p class="legend-note">${t('create.unique.rule')}${holders === null ? ` — ${t('create.unique.checking')}` : ''}</p>
+        <div class="class-grid">${apexCards}</div>`;
+    }
+
     return `
       <h1>${t('app.title')}</h1>
       <p class="tagline">${t('create.tagline', { n: classes.length })}</p>
       ${legacyNote}
       <div class="class-grid">
-        ${classes.map((c) => `
-          <button class="class-card ${this.selectedClassId === c.id ? 'selected' : ''}" data-action="pick-class" data-class="${c.id}">
-            <div class="class-card-head">${this.renderPortrait(c.portrait, null, 52)}<div><h3>${className(c.id)}</h3><p class="class-tagline">${classTagline(c.id)}</p></div></div>
-            <ul class="class-stats">
-              <li>${t('stat.maxHp')} ${c.baseStats.maxHp}</li><li>${t('stat.atk')} ${c.baseStats.atk}</li>
-              <li>${t('stat.def')} ${c.baseStats.def}</li><li>${t('stat.speed')} ${c.baseStats.speed}</li>
-            </ul>
-            <p class="class-signature"><b>${signatureName(c.signature.id)}:</b> ${signatureDesc(c.signature.id)}</p>
-          </button>
-        `).join('')}
+        ${classes.map((c) => this.renderClassCard(c)).join('')}
       </div>
+      <h2 class="create-tier-title tier-title-secret">${t('create.secret.title')}</h2>
+      <div class="class-grid">${secretCards}</div>
+      ${apexSection}
+      ${this.createError ? `<p class="heart-lost">${this.createError}</p>` : ''}
       <input type="text" id="char-name-input" class="name-input" placeholder="${t('create.name.placeholder')}" maxlength="20" />
       <button class="btn btn-primary" data-action="confirm-create" ${this.selectedClassId ? '' : 'disabled'}>${t('create.confirm')}</button>
     `;
@@ -1602,6 +1876,12 @@ export class GameController {
       serviceHtml = `
         <p class="npc-svc-name">${t('npc.mara.svc')}</p>
         <button class="btn btn-primary" data-action="goto-shop">${t('town.shop')}</button>`;
+    } else if (npc.service === 'pvpshop') {
+      // v11: the Arena Warden — trades PvP Points for the Arena Honor set.
+      serviceHtml = `
+        <p class="npc-svc-name">${t('npc.warden.svc')}</p>
+        <p class="legend-note">${t('pvpshop.balance', { n: p.pvpPoints || 0 })}</p>
+        <button class="btn btn-primary" data-action="goto-pvpshop">${t('npc.warden.open')}</button>`;
     }
 
     const notice = this.npcNotice === 'ok' ? `<p class="reward-line">✓</p>` : this.npcNotice === 'fail' ? `<p class="heart-lost">${t('npc.notEnoughMat')}</p>` : '';
@@ -1664,7 +1944,7 @@ export class GameController {
     const p = this.player;
     const cap = bagCapacity(p);
     const inTown = this.place.kind === 'town'; // v6: selling is town-only now
-    const slots = ['weapon', 'armor', 'accessory'];
+    const slots = Object.values(EquipmentSlot); // v11: the full 8-slot paper-doll
     const matChips = Object.entries(p.materials || {})
       .map(([key, count]) => `<span class="material-chip">${materialName(Number(key.slice(1)))} ×${count}</span>`).join('') || `<span class="legend-note">—</span>`;
 
@@ -2052,7 +2332,34 @@ export class GameController {
       <h2>${r.won ? t('result.win') : t('result.lose')}</h2>
       <p>${t('pvp.opponent', { name: r.opponent.name, type: r.matchType === 'bot' ? t('pvp.bot') : t('pvp.human'), cp: r.opponent.combatPower })}</p>
       ${r.won ? `<p class="reward-line">${t('pvp.winBody')}</p>` : `<p class="heart-lost">${t('pvp.heartLost', { n: r.heartsLeft })}</p>`}
+      <p class="reward-line">${t('pvp.ptsEarned', { n: r.ptsEarned || 0, total: this.player.pvpPoints || 0 })}</p>
+      ${this.player.sanityCursed ? `<p class="legend-note">${t('sanity.fed')}</p>` : ''}
       <button class="btn btn-primary" data-action="capital">${t('result.continue')}</button>
+    `;
+  }
+
+  /** v11: the Arena Warden's shop — the Arena Honor set, priced in PvP Points. */
+  renderPvpShop() {
+    const p = this.player;
+    const notice = this.pvpShopNotice === 'ok' ? `<p class="reward-line">✓ ${t('pvpshop.bought')}</p>`
+      : this.pvpShopNotice === 'noPoints' ? `<p class="heart-lost">${t('pvpshop.noPoints')}</p>`
+      : this.pvpShopNotice === 'bagFull' ? `<p class="heart-lost">${t('pvpshop.bagFull')}</p>` : '';
+    return `
+      <h2>${t('pvpshop.title')}</h2>
+      <p class="tagline">${t('pvpshop.tagline')}</p>
+      <p class="legend-note">${t('pvpshop.balance', { n: p.pvpPoints || 0 })} · ${t('pvpshop.note')}</p>
+      <div class="loot-list">
+        ${PVP_SET.map((e) => {
+          const affordable = (p.pvpPoints || 0) >= e.cost;
+          return `<div class="item-chip" style="border-color:${Rarity.PVP.color}">
+            <div class="item-name" style="color:${Rarity.PVP.color}">${t(e.baseNameKey)}${t('rarity.pvp')}</div>
+            <div class="legend-note">${t(`slot.${e.slot}`)} · ${t('pvpshop.cost', { n: e.cost })}</div>
+            <button class="btn btn-tiny btn-primary" data-action="pvpshop-buy" data-entry="${e.id}" ${affordable ? '' : 'disabled'}>${t('pvpshop.buy')}</button>
+          </div>`;
+        }).join('')}
+      </div>
+      ${notice}
+      <button class="btn btn-secondary" data-action="npc-back">${t('inv.back')}</button>
     `;
   }
 

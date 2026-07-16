@@ -75,6 +75,7 @@ import {
   rollCampfireAmbush, generateAmbushEnemy, cursedDropChanceFor,
   hazardName, hazardDesc, hazardIcon, HAZARD_SIGHT_VISION,
   effectiveNodeType, isLiveBossNode, rollProwler,
+  xpMultiplierFor, // v12: anti-grind XP drop-off
 } from './zone-map.js';
 import {
   generateLoot, salvageValue, passiveName, passiveDesc,
@@ -89,7 +90,7 @@ import {
   canUpgradeBag, upgradeBag, bagUpgradeCost,
   canUpgradeVision, upgradeVision, visionUpgradeCost, VISION_MAX,
   canReforge, reforgeWeapon, reforgeCost,
-  canCleanseCurse, performCleanseCurse, CLEANSE_GOLD_COST, CLEANSE_MATERIAL_COST,
+  canCleanseCurse, performCleanseCurse, cleanseCost, // v12: cost scales with level/CP
   smugglerStock, canBuyHeartFromSmuggler, buyHeartFromSmuggler, SMUGGLER_HEART_COST,
 } from './npc.js';
 import { generateShopStock, sellPrice, travelDestinations, travelCost } from './town.js';
@@ -320,7 +321,7 @@ export class GameController {
       case 'goto-shop': this.openShop(); break;
       case 'buy': this.buyFromShop(Number(a.index)); break;
       case 'sell-bag-item': this.sellBagItem(a.item); break;
-      case 'goto-town-from-shop': this.goTo('town'); break;
+      case 'goto-town-from-shop': this.goTo(this.placeScreen()); break; // v12: works from the Capital market too
       case 'goto-npc': this.activeNpcId = a.npc; this.npcNotice = null; this.goTo('npc'); break;
       case 'npc-back': this.goTo(this.placeScreen()); break;
       case 'npc-upgrade-bag': this.doNpcService('bag'); break;
@@ -441,6 +442,17 @@ export class GameController {
   /** The macro-graph node id the player is currently standing on. */
   currentMacroId() {
     return this.place.kind === 'hub' ? this.place.hubId : String(this.place.zoneIndex);
+  }
+
+  // v12: everywhere a merchant will deal with you — every town, plus the
+  // Capital's own market (the Start Village stays a merchant-less refuge).
+  canTradeHere() {
+    return this.place.kind === 'town' || (this.place.kind === 'hub' && this.place.hubId === 'capital');
+  }
+
+  /** What to hand town.js pricing/stock functions as the market's zone ref. */
+  shopZoneRef() {
+    return this.place.kind === 'hub' ? 'capital' : this.place.zoneIndex;
   }
 
   // ---------------- Character creation ----------------
@@ -913,7 +925,11 @@ export class GameController {
     const rewardNode = { ...node, type: effType };
     const rewards = NODE_REWARDS[effType] || NODE_REWARDS[NodeType.NORMAL];
 
-    const xp = won ? rewards.winXp : rewards.loseXp;
+    // v12 ANTI-GRIND: XP decays to a hard 0 for content trivially below the
+    // player's level (zone-map.xpMultiplierFor). Gold and materials are
+    // deliberately untouched — farming old zones stays an economy, not a ladder.
+    const xpMult = xpMultiplierFor(zone, this.player.level);
+    const xp = Math.round((won ? rewards.winXp : rewards.loseXp) * xpMult);
     const leveledUp = this.player.gainXp(xp);
     const gold = goldDropFor(rewardNode, zone, won);
     this.player.gold += gold;
@@ -978,6 +994,7 @@ export class GameController {
 
     this.lastResult = {
       kind: 'battle', won: true, xp, gold, mats, lootMsgs: [], leveledUp, lordSlain,
+      trivial: xpMult === 0, // v12: the zone has nothing left to teach
       opponentName: bs.enemy.name, zoneIndex: zone.index, ambush: isAmbush, prowler: isProwler,
       unlockedMacroId, // v9: drives the "Continue to the next land" button
       openRoads: lordSlain ? this.openRoadsFromHere() : [], // v9.2: every road this region now offers
@@ -1071,12 +1088,12 @@ export class GameController {
     this.render();
   }
 
-  /** v6: selling is only possible while standing in a Town — loot must be physically carried back to a Merchant. */
+  /** v6/v12: selling needs a merchant — any Town, or the Capital's market. Loot must be physically carried back. */
   sellBagItem(itemId) {
-    if (this.place.kind !== 'town') return;
+    if (!this.canTradeHere()) return;
     const item = removeFromBag(this.player, itemId);
     if (!item) return;
-    this.player.gold += sellPrice(item, this.place.zoneIndex);
+    this.player.gold += sellPrice(item, this.shopZoneRef());
     if (this.selectedBagItemId === itemId) this.selectedBagItemId = null;
     this.persist();
     this.render();
@@ -1085,7 +1102,8 @@ export class GameController {
   // ---------------- Town / shop / travel / NPC ----------------
 
   openShop() {
-    if (!this.shopStock) this.shopStock = generateShopStock(this.place.zoneIndex, this.player.level);
+    if (!this.canTradeHere()) return;
+    if (!this.shopStock) this.shopStock = generateShopStock(this.shopZoneRef(), this.player.level);
     this.goTo('shop');
   }
 
@@ -1632,6 +1650,7 @@ export class GameController {
       <div class="menu-actions">
         <button class="btn btn-primary" data-action="goto-worldmap">${t('capital.depart')}</button>
         <button class="btn btn-secondary" data-action="goto-travel">${t('capital.travel')}</button>
+        ${isCapital ? `<button class="btn btn-secondary" data-action="goto-shop">${t('capital.market')}</button>` : ''}
         <button class="btn btn-secondary" data-action="goto-bag">${t('capital.bag')}</button>
         <button class="btn btn-danger" data-action="pvp" ${dead ? 'disabled' : ''}>${t('capital.arena')}</button>
         <button class="btn btn-secondary" data-action="goto-leaderboard">${t('menu.leaderboard')}</button>
@@ -1787,6 +1806,21 @@ export class GameController {
     return `<div class="item-passive locked">${t('passive.dormant', { town: townName(RUNESMITH_ZONE_INDEX) })}</div>`;
   }
 
+  /**
+   * v12: the ONE place special item statuses render. Passives and Curses get
+   * their own visually distinct rows, cleanly fenced off from the base stat
+   * mods — every chip (bag, doll, shop, smuggler, loot gate) calls this
+   * instead of hand-rolling its own subset, so nothing pops in one screen
+   * and silently vanishes in another.
+   */
+  renderItemStatusRows(item) {
+    if (!item) return '';
+    const rows = [];
+    if (item.passive) rows.push(this.renderItemPassiveHtml(item));
+    if (item.curse) rows.push(`<div class="item-curse">⚠ ${curseName(item.curse)}: ${curseDesc(item.curse)}</div>`);
+    return rows.length ? `<div class="item-status">${rows.join('')}</div>` : '';
+  }
+
   /** v8: the Hidden Runesmith awakening event (diverted-to from arriveTown). */
   renderAwakenEvent() {
     return `
@@ -1803,14 +1837,15 @@ export class GameController {
   renderShop() {
     const stock = this.shopStock || [];
     const bagFull = this.player.bag.length >= bagCapacity(this.player);
+    const marketName = this.place.kind === 'hub' ? t('capital.name') : townName(this.place.zoneIndex); // v12
     return `
-      <h2>${t('shop.title', { town: townName(this.place.zoneIndex) })}</h2>
+      <h2>${t('shop.title', { town: marketName })}</h2>
       <div class="loot-list">
         ${stock.length ? stock.map((e, i) => `
           <div class="item-chip" style="border-color:${e.item.rarity.color}">
             <div class="item-name" style="color:${e.item.rarity.color}">${e.item.name}</div>
             <div class="item-mods">${Object.entries(e.item.statMods).map(([k, v]) => `+${v} ${t(`stat.${k}`)}`).join(' · ')}</div>
-            ${this.renderItemPassiveHtml(e.item)}
+            ${this.renderItemStatusRows(e.item)}
             <button class="btn btn-tiny btn-primary" data-action="buy" data-index="${i}" ${this.player.gold < e.price || bagFull ? 'disabled' : ''}>
               ${t('shop.buy', { n: e.price })}${bagFull ? ` — ${t('shop.bagFull')}` : this.player.gold < e.price ? ` — ${t('shop.noGold')}` : ''}
             </button>
@@ -1819,9 +1854,10 @@ export class GameController {
       <h3>${t('shop.yourBag')}</h3>
       <div class="loot-list">
         ${this.player.bag.map((item) => `
-          <div class="item-chip" style="border-color:${item.rarity.color}">
+          <div class="item-chip ${item.curse ? 'cursed-item' : ''}" style="border-color:${item.rarity.color}">
             <div class="item-name" style="color:${item.rarity.color}">${item.name}</div>
-            <button class="btn btn-tiny btn-secondary" data-action="sell-bag-item" data-item="${item.id}">${t('shop.sell', { n: sellPrice(item, this.place.zoneIndex) })}</button>
+            ${this.renderItemStatusRows(item)}
+            <button class="btn btn-tiny btn-secondary" data-action="sell-bag-item" data-item="${item.id}">${t('shop.sell', { n: sellPrice(item, this.shopZoneRef()) })}</button>
           </div>`).join('')}
       </div>
       <button class="btn btn-secondary" data-action="goto-town-from-shop">${t('inv.back')}</button>
@@ -1845,7 +1881,7 @@ export class GameController {
         <button class="btn btn-primary" data-action="npc-upgrade-bag" ${check.ok ? '' : 'disabled'}>${t('npc.service')}</button>
         <hr class="npc-divider"/>
         <p class="npc-svc-name">${t('npc.vesper.cleanseSvc')}</p>
-        <p class="legend-note">${t('npc.vesper.cleanseCost', { gold: CLEANSE_GOLD_COST, mat: CLEANSE_MATERIAL_COST })}</p>
+        <p class="legend-note">${t('npc.vesper.cleanseCost', { gold: cleanseCost(p).gold, mat: cleanseCost(p).materials })}</p>
         ${cursedItems.length ? `<div class="loot-list">${cursedItems.map((item) => {
           const c2 = canCleanseCurse(p, item);
           return `<div class="item-chip cursed-item" style="border-color:${item.rarity.color}">
@@ -1922,7 +1958,7 @@ export class GameController {
             <div class="item-chip ${e.item.curse ? 'cursed-item' : ''}" style="border-color:${e.item.rarity.color}">
               <div class="item-name" style="color:${e.item.rarity.color}">${e.item.name}</div>
               <div class="item-mods">${Object.entries(e.item.statMods).map(([k, v]) => `+${v} ${t(`stat.${k}`)}`).join(' · ')}</div>
-              ${e.item.curse ? `<div class="item-curse">⚠ ${curseName(e.item.curse)}: ${curseDesc(e.item.curse)}</div>` : ''}
+              ${this.renderItemStatusRows(e.item)}
               <button class="btn btn-tiny btn-primary" data-action="smuggler-buy" data-index="${i}" ${this.player.gold < e.price || bagFull ? 'disabled' : ''}>
                 ${t('shop.buy', { n: e.price })}${bagFull ? ` — ${t('shop.bagFull')}` : this.player.gold < e.price ? ` — ${t('shop.noGold')}` : ''}
               </button>
@@ -1938,6 +1974,21 @@ export class GameController {
         <button class="btn btn-secondary" data-action="smuggler-back">${t('inv.back')}</button>
       </div>
     `;
+  }
+
+  /** v12: one compact paper-doll slot chip for the doll grid. */
+  renderDollSlot(slot, cap) {
+    const p = this.player;
+    const item = p.equipment[slot];
+    return `<div class="doll-slot">
+      <div class="doll-slot-label">${t(`slot.${slot}`)}</div>
+      ${item ? `<div class="item-chip doll-chip ${item.curse ? 'cursed-item' : ''}" style="border-color:${item.rarity.color}">
+        <div class="item-name" style="color:${item.rarity.color}">${item.name}</div>
+        <div class="item-mods">${Object.entries(item.statMods).map(([k, v]) => `+${v} ${t(`stat.${k}`)}`).join(' · ')}</div>
+        ${this.renderItemStatusRows(item)}
+        <button class="btn btn-tiny btn-secondary" data-action="unequip" data-slot="${slot}" ${p.bag.length >= cap ? 'disabled' : ''}>${t('inv.unequip')}</button>
+      </div>` : `<div class="item-chip doll-chip empty">${t('inv.empty')}</div>`}
+    </div>`;
   }
 
   renderBag() {
@@ -1994,20 +2045,20 @@ export class GameController {
     return `
       <h2>${t('bag.title', { used: p.bag.length, cap })}</h2>
       ${hiddenCard}
-      <div class="portrait-large">${this.renderPortrait(p.portrait, p.equipment, 120)}</div>
-      <div class="doll-slots">
-        ${slots.map((slot) => {
-          const item = p.equipment[slot];
-          return `<div class="doll-slot">
-            <div class="doll-slot-label">${t(`slot.${slot}`)} (${t('bag.equipped')})</div>
-            ${item ? `<div class="item-chip ${item.curse ? 'cursed-item' : ''}" style="border-color:${item.rarity.color}">
-              <div class="item-name" style="color:${item.rarity.color}">${item.name}</div>
-              <div class="item-mods">${Object.entries(item.statMods).map(([k, v]) => `+${v} ${t(`stat.${k}`)}`).join(' · ')}</div>
-              ${item.curse ? `<div class="item-curse">⚠ ${curseName(item.curse)}: ${curseDesc(item.curse)}</div>` : ''}
-              <button class="btn btn-tiny btn-secondary" data-action="unequip" data-slot="${slot}" ${p.bag.length >= cap ? 'disabled' : ''}>${t('inv.unequip')}</button>
-            </div>` : `<div class="item-chip empty">${t('inv.empty')}</div>`}
-          </div>`;
-        }).join('')}
+      <!-- v12 PAPER-DOLL GRID: armor pieces frame the portrait's left flank
+           top-to-bottom (head→chest→legs→boots), weapon + jewelry take the
+           right. On phones the portrait rises to the top and the two columns
+           sit side-by-side beneath it (see .doll-grid media query). -->
+      <div class="doll-grid">
+        <div class="doll-col doll-col-left">
+          ${['head', 'armor', 'legs', 'boots'].map((slot) => this.renderDollSlot(slot, cap)).join('')}
+        </div>
+        <div class="doll-center">
+          <div class="portrait-large">${this.renderPortrait(p.portrait, p.equipment, 120)}</div>
+        </div>
+        <div class="doll-col doll-col-right">
+          ${['weapon', 'ring', 'necklace', 'bracelet'].map((slot) => this.renderDollSlot(slot, cap)).join('')}
+        </div>
       </div>
       <h3>${t('bag.materials')}</h3>
       <div class="material-row">${matChips}</div>
@@ -2017,7 +2068,7 @@ export class GameController {
           <div class="item-chip bag-item ${this.selectedBagItemId === item.id ? 'selected' : ''} ${item.curse ? 'cursed-item' : ''}" style="border-color:${item.rarity.color}">
             <div class="item-name" style="color:${item.rarity.color}">${item.name} <span class="legend-note">(${t(`slot.${item.slot}`)})</span></div>
             <div class="item-mods">${Object.entries(item.statMods).map(([k, v]) => `+${v} ${t(`stat.${k}`)}`).join(' · ')}</div>
-            ${item.curse ? `<div class="item-curse">⚠ ${curseName(item.curse)}: ${curseDesc(item.curse)}</div>` : ''}
+            ${this.renderItemStatusRows(item)}
             <button class="btn btn-tiny btn-primary" data-action="bag-select" data-item="${item.id}">${t('bag.compare')}</button>
           </div>`).join('') : `<p class="legend-note">${t('bag.empty')}</p>`}
       </div>
@@ -2169,8 +2220,7 @@ export class GameController {
           <div class="item-chip ${item.curse ? 'cursed-item' : ''}" style="border-color:${item.rarity.color}">
             <div class="item-name" style="color:${item.rarity.color}">${item.name} <span class="legend-note">(${t(`slot.${item.slot}`)})</span></div>
             <div class="item-mods">${Object.entries(item.statMods).map(([k, v]) => `+${v} ${t(`stat.${k}`)}`).join(' · ')}</div>
-            ${this.renderItemPassiveHtml(item)}
-            ${item.curse ? `<div class="item-curse">⚠ ${curseName(item.curse)}: ${curseDesc(item.curse)}</div>` : ''}
+            ${this.renderItemStatusRows(item)}
           </div>
           <table class="compare-table">
             <tr><td></td><td>${t('compare.new')}</td><td>${t('compare.current')}${equipped ? '' : ` (${t('compare.none')})`}</td><td></td></tr>
@@ -2219,6 +2269,7 @@ export class GameController {
       ${r.ambush ? `<p class="reward-line">${t('ambush.survived')}</p>` : ''}
       ${r.prowler ? `<p class="reward-line">${t('prowler.encounter')}</p>` : ''}
       <p class="reward-line">${t('result.goldReward', { xp: r.xp, gold: r.gold })}${r.leveledUp ? t('result.levelup') : ''}</p>
+      ${r.trivial ? `<p class="legend-note">${t('result.trivial')}</p>` : ''}
       ${r.mats > 0 ? `<p class="altar-note">${t('mat.drop', { n: r.mats, mat: materialName(r.zoneIndex) })}</p>` : ''}
       ${r.lordSlain ? `<p class="reward-line">${t('lord.slain', { zone: zoneName(r.zoneIndex) })}</p>` : ''}
       ${lootGate}

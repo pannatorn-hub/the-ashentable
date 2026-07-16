@@ -10,7 +10,11 @@
 import { Combatant } from './combatant.js';
 
 const CP_MATCH_TOLERANCE = 0.15;
-const BOT_CP_MULTIPLIER = 1.10;
+// v12 BALANCE: the fallback bot now spawns slightly WEAKER than the player
+// (-20%..-5% CP, was a flat +10%). The old bot guaranteed a Heart loss for
+// anyone who couldn't out-parry the stat gap; the arena should teach the
+// Counter/Parry dance, not execute students. Human matches stay CP-fair.
+const BOT_CP_RANGE = [0.80, 0.95];
 
 export class Matchmaker {
   constructor() { this.queue = []; }
@@ -32,9 +36,10 @@ export class Matchmaker {
     return { type: 'bot', opponent: Matchmaker.generateBot(player) };
   }
 
-  /** Reverse-engineers stats from the CP formula so the bot lands at ~+10% CP. */
+  /** Reverse-engineers stats from the CP formula so the bot lands at -20%..-5% of the player's CP. */
   static generateBot(player) {
-    const targetCP = Math.round(player.combatPower * BOT_CP_MULTIPLIER);
+    const mult = BOT_CP_RANGE[0] + Math.random() * (BOT_CP_RANGE[1] - BOT_CP_RANGE[0]);
+    const targetCP = Math.round(player.combatPower * mult);
 
     // Small slices for dodge (~10%), accuracy (~4%), crit rate (~4%) so the
     // bot uses the new stat layer too; the rest goes to the core four.

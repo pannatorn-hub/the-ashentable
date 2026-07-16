@@ -456,6 +456,29 @@ export function dangerMultiplier(dangerTier) {
 
 const TIER_MULT = { [NodeType.NORMAL]: 1, [NodeType.HARD]: 1.3, [NodeType.ELITE]: 1.7, [NodeType.LORD]: 2.3 };
 
+// ---------------------------------------------------------------------------
+// v12 XP DROP-OFF — the anti-grind law. A zone "expects" a certain level
+// (its dangerTier). Fight at or near that level and XP pays in full; grind
+// trivially far below your station and the reward decays 15% per level over
+// a 2-level grace band, bottoming out at EXACTLY 0. Farming early zones
+// stays viable for gold and materials (untouched) — but never for levels.
+// Kept here, DOM-free, next to the scaling laws it mirrors.
+// ---------------------------------------------------------------------------
+export const XP_GRACE_LEVELS = 2;
+export const XP_DECAY_PER_OVERLEVEL = 0.15;
+
+/** The level a zone's enemies are 'meant' for — tier 0 ≈ lv4, +5 per danger tier. */
+export function zoneExpectedLevel(zone) {
+  return 4 + Math.max(0, zone.dangerTier || 0) * 5;
+}
+
+/** 1.0 at-or-below the zone's band, decaying to a hard 0 for trivial content. */
+export function xpMultiplierFor(zone, playerLevel) {
+  const over = playerLevel - zoneExpectedLevel(zone) - XP_GRACE_LEVELS;
+  if (over <= 0) return 1;
+  return Math.max(0, 1 - over * XP_DECAY_PER_OVERLEVEL);
+}
+
 export function generateEnemyForNode(node, zone, playerLevel) {
   // v10 ENEMY SCALING REVAMP: enemy base stats are FIXED by the zone
   // (dangerTier x depth x node type). The player's level now adds only a
@@ -497,7 +520,14 @@ export function rollCampfireAmbush(zone) {
 
 /** The thing that crawls out of the dark while you sleep — an elite-grade predator. */
 export function generateAmbushEnemy(zone, node, playerLevel) {
-  const scale = 1.5 * dangerMultiplier(zone.dangerTier) * depthMultiplier(node.depth) * (1 + (playerLevel - 1) * 0.06);
+  // v12 ENFORCEMENT: the ambusher now obeys the exact same scaling law as
+  // every other enemy — zone-fixed power (danger x depth), the capped
+  // +1.2%/level whisper, and Pan's global *0.5 nerf. It kept the old
+  // uncapped +6%/level formula through the v10 revamp by mistake, which made
+  // late-game campfires disproportionately lethal. Its 1.5x elite premium
+  // over a NORMAL node is unchanged.
+  const levelBump = 1 + Math.min(playerLevel - 1, 30) * 0.012;
+  const scale = 1.5 * dangerMultiplier(zone.dangerTier) * depthMultiplier(node.depth) * levelBump * 0.5;
   const wobble = () => 0.85 + Math.random() * 0.3;
   return new Combatant({
     name: t('enemy.ambusher'),

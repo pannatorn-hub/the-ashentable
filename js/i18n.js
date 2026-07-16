@@ -1409,3 +1409,14 @@ Object.assign(EN, {
   'hidden.cinderveil': 'Cinderveil', 'hidden.cinderveil.desc': 'Your flames consume far more fiercely.',
   'hidden.lastcartographer': 'The Last Cartographer', 'hidden.lastcartographer.desc': 'A chance to strike again — the world\u2019s edge taught you never to stop.',
 });
+
+
+// ============================ v12 — Balance & Market ============================
+Object.assign(TH, {
+  'capital.market': '🛒 ตลาดหลวง',
+  'result.trivial': 'ศัตรูที่นี่อ่อนแอเกินกว่าจะสอนอะไรเจ้าได้อีกแล้ว — ไม่ได้รับค่าประสบการณ์',
+});
+Object.assign(EN, {
+  'capital.market': '🛒 The Royal Market',
+  'result.trivial': 'The foes here are too feeble to teach you anything now — no experience gained.',
+});

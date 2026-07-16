@@ -50,7 +50,11 @@ export function npcsAt(location) {
 
 // ---------------- เวสเปอร์: bag upgrades ----------------
 
-export function bagUpgradeCost(player) { return ((player.bagUpgrades || 0) + 1) * 4; } // 4, 8, 12, 16 of one material kind
+// v12 BALANCE: the Dimensional Mage's price now COMPOUNDS — each fold of
+// space is three times harder to weave than the last. 6 → 18 → 54 → 162 of
+// one material kind. Maxing the bag is a late-game achievement, not a
+// shopping trip.
+export function bagUpgradeCost(player) { return 6 * Math.pow(3, player.bagUpgrades || 0); }
 
 export function canUpgradeBag(player) {
   if ((player.bagUpgrades || 0) >= BAG_MAX_UPGRADES) return { ok: false, reason: 'maxed' };
@@ -73,14 +77,23 @@ export function upgradeBag(player) {
 // monstrous stats, no more drawback. Costs gold AND materials: cleansing a
 // mistake should still hurt a little less than the curse itself did.
 
-export const CLEANSE_GOLD_COST = 150;
-export const CLEANSE_MATERIAL_COST = 15;
+// v12 BALANCE: cleansing scales punishingly with the sinner's stature.
+// The stronger you are, the more the curse has rooted into you — a level-30,
+// CP-2000 lord pays ~3,550 gold and 30 materials per cleanse (was a flat
+// 150/15). Cursed gear stays a genuine devil's bargain all game long.
+export function cleanseCost(player) {
+  return {
+    gold: 500 + player.level * 75 + Math.round((player.combatPower || 0) * 0.4),
+    materials: 20 + Math.floor(player.level / 3),
+  };
+}
 
 export function canCleanseCurse(player, item) {
   if (!item || !item.curse) return { ok: false, reason: 'noCurse' };
-  if (player.gold < CLEANSE_GOLD_COST) return { ok: false, reason: 'gold' };
-  if (largestMaterialStack(player).count < CLEANSE_MATERIAL_COST) return { ok: false, reason: 'materials' };
-  return { ok: true, cost: { gold: CLEANSE_GOLD_COST, materials: CLEANSE_MATERIAL_COST } };
+  const cost = cleanseCost(player);
+  if (player.gold < cost.gold) return { ok: false, reason: 'gold' };
+  if (largestMaterialStack(player).count < cost.materials) return { ok: false, reason: 'materials' };
+  return { ok: true, cost };
 }
 
 /** Mutates `item` in place (cleanseCurse from equipment.js) — works whether it's equipped or sitting in the bag. */

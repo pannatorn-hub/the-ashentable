@@ -1173,3 +1173,239 @@ export function t(key, params = null) {
   if (params) for (const [k, v] of Object.entries(params)) s = s.replaceAll(`{${k}}`, String(v));
   return s;
 }
+
+
+// ============================ v11 — The Ashen Ascension ============================
+// Slot expansion (8-slot paper-doll), the Arena Warden + PvP-point economy,
+// Secret & Unique class tiers, and the Sanity Curse. TH block first, then a
+// key-for-key EN mirror — same discipline as every block above.
+
+Object.assign(TH, {
+  // ---- v11 slots ----
+  'slot.head': 'หมวก', 'slot.armor': 'เกราะอก', 'slot.legs': 'สนับขา', 'slot.boots': 'รองเท้า',
+  'slot.ring': 'แหวน', 'slot.necklace': 'สร้อยคอ', 'slot.bracelet': 'กำไล',
+
+  // ---- v11 item bases ----
+  'item.helm': 'หมวกเหล็ก', 'item.hood': 'ฮู้ดคลุมเงา', 'item.circlet': 'มงกุฎรัดเกล้า',
+  'item.greaves': 'สนับแข้งเหล็ก', 'item.leggings': 'สนับขาหนัง',
+  'item.sabatons': 'รองเท้าเกราะ', 'item.boots': 'รองเท้าหนัง', 'item.striders': 'รองเท้าลมกรด',
+  'item.signet': 'แหวนตรา', 'item.pendant': 'จี้ห้อยคอ', 'item.bangle': 'กำไลข้อมือ',
+
+  // ---- v11 PvP rarity + Arena Honor set ----
+  'rarity.pvp': 'เกียรติยศ',
+  'item.pvp.blade': 'ดาบสังเวียน', 'item.pvp.helm': 'หมวกสังเวียน', 'item.pvp.plate': 'เกราะสังเวียน',
+  'item.pvp.greaves': 'สนับแข้งสังเวียน', 'item.pvp.boots': 'รองเท้าสังเวียน',
+  'item.pvp.ring': 'แหวนสังเวียน', 'item.pvp.amulet': 'สร้อยสังเวียน', 'item.pvp.band': 'กำไลสังเวียน',
+
+  // ---- v11 PvP points / Warden shop ----
+  'hud.pvpPoints': '🏅 {n}',
+  'pvp.ptsEarned': '🏅 +{n} แต้มสังเวียน (สะสม {total})',
+  'pvpshop.title': 'คลังเกียรติยศสังเวียน',
+  'pvpshop.tagline': 'เลือดที่หลั่งในสังเวียนไม่เคยสูญเปล่า',
+  'pvpshop.balance': 'แต้มสังเวียนของเจ้า: 🏅 {n}',
+  'pvpshop.note': 'ยุทธภัณฑ์จากเลือดและเหงื่อ — แต่ตำนานที่แท้จริงยังหลับใหลอยู่ในแดนลึกและมือของผู้ที่มองไม่เห็น',
+  'pvpshop.cost': '🏅 {n} แต้ม',
+  'pvpshop.buy': 'แลก',
+  'pvpshop.bought': 'ได้รับแล้ว — เก็บไว้ในกระเป๋ามิติ',
+  'pvpshop.noPoints': 'แต้มสังเวียนไม่พอ — จงกลับไปหลั่งเลือดเพิ่ม',
+  'pvpshop.bagFull': 'กระเป๋ามิติเต็ม — จัดการสัมภาระก่อน',
+
+  // ---- v11 NPC: ศัสตรา ผู้คุมสังเวียน ----
+  'npc.warden.name': 'ศัสตรา',
+  'npc.warden.title': 'ผู้คุมสังเวียนเลือด',
+  'npc.warden.lore': 'อดีตแชมป์ร้อยศึกผู้ปฏิเสธที่จะตายในสังเวียน เล่ากันว่าเมื่อหัวใจดวงสุดท้ายของเขาแตกสลาย เมืองหลวงกลับปฏิเสธความตายของเขา — บัดนี้เขายืนเฝ้าประตูสังเวียนชั่วนิรันดร์ แลกเกียรติยศกับเหล็กกล้าให้ผู้ที่ยังหายใจ',
+  'npc.warden.line1': '"เลือดของเจ้ามีราคา และข้าคือคนจ่าย"',
+  'npc.warden.line2': '"อย่าถามว่าข้าตายมาแล้วกี่ครั้ง... จงถามว่าเหตุใดข้ายังยืนอยู่"',
+  'npc.warden.svc': 'แลกแต้มสังเวียนเป็นยุทธภัณฑ์เกียรติยศ',
+  'npc.warden.open': 'เปิดคลังเกียรติยศ',
+
+  // ---- v11 creation: tiers ----
+  'create.locked': 'ยังไม่ปลดล็อก',
+  'create.tier.secret': 'คลาสลับ',
+  'create.tier.unique': 'หนึ่งเดียว',
+  'create.secret.title': '— คลาสลับ —',
+  'create.unique.title': '— คลาสเอกอุแห่งเซิร์ฟเวอร์ —',
+  'create.unique.rule': 'แต่ละบัลลังก์มีผู้ครองได้เพียงหนึ่งเดียวทั้งเซิร์ฟเวอร์ — หากผู้ครองสิ้นชีพถาวรในสังเวียน บัลลังก์จะว่างลงให้ผู้อื่นชิงทันที',
+  'create.unique.checking': 'กำลังหยั่งดูบัลลังก์...',
+  'create.unique.holder': 'บัลลังก์นี้มีผู้ครอง — {name}',
+  'create.unique.taken': 'ช้าไปเพียงหนึ่งลมหายใจ — {name} ชิงบัลลังก์นี้ไปแล้ว',
+  'create.unique.claimError': 'ไม่อาจติดต่อผู้ตัดสินบัลลังก์ได้ — ลองอีกครั้ง',
+
+  // ---- v11 Sanity Curse ----
+  'sanity.onset.title': '🕯 คำสาปสติวิปลาส',
+  'sanity.onset.body': 'เจ้าก้าวลึกเกินกว่าที่จิตมนุษย์จะทานทน เสียงกระซิบเริ่มกัดกินขอบสติ... นับแต่นี้ จงหลั่งเลือดในสังเวียนอย่างน้อยหนึ่งครั้งทุก 24 ชั่วโมง มิเช่นนั้นคำสาปจะเก็บเกี่ยวหัวใจของเจ้าไปทีละดวง',
+  'sanity.tax.title': 'คำสาปทวงหัวใจ',
+  'sanity.tax.body': 'เจ้าหลบเลี่ยงสังเวียนนานเกินไป — คำสาปเก็บเกี่ยวหัวใจไป {n} ดวง',
+  'sanity.tax.died': 'คำสาปเก็บเกี่ยวหัวใจไป {n} ดวง... รวมถึงดวงสุดท้าย การเดินทางของเจ้าจบลงในความวิปลาส',
+  'sanity.fed': '🕯 คำสาปได้ลิ้มรสเลือดแล้ว — สติของเจ้ามั่นคงไปอีก 24 ชั่วโมง',
+  'sanity.hud.tip': 'เวลาที่เหลือก่อนคำสาปทวงหัวใจ — สู้ในสังเวียนหนึ่งครั้งเพื่อเริ่มนับใหม่',
+
+  // ---- v11 Secret classes ----
+  'class.cursebreaker': 'ผู้หักคำสาป', 'class.cursebreaker.tag': 'มือที่กลืนกินสิ่งที่คนอื่นไม่กล้าแตะ',
+  'class.cursebreaker.hint': 'จงชำระสิ่งต้องสาปให้ครบสามครา... แล้วคำสาปจะจดจำมือของเจ้า',
+  'class.ashenknight': 'อัศวินเถ้าธุลี', 'class.ashenknight.tag': 'เกราะที่หลอมจากซากแดนลึก',
+  'class.ashenknight.hint': 'จอมมารแห่งแดนอันตรายขั้นที่หก... โค่นมัน แล้วสวมเถ้าของมัน',
+  'class.gravewarden': 'ผู้เฝ้าสุสาน', 'class.gravewarden.tag': 'ผู้ดื่มกินจากหลุมศพของตนเอง',
+  'class.gravewarden.hint': 'เมื่อหลุมศพแรกของเจ้าให้กำเนิดทายาท ผู้เฝ้าจะเปิดประตูรับ',
+  'class.moonveil': 'จันทร์คลุมเงา', 'class.moonveil.tag': 'คมมีดที่แสงจันทร์ไม่ยอมส่อง',
+  'class.moonveil.hint': 'นางเร่ขายหัวใจใต้เงาหมอก... จงซื้อมันสักครั้ง',
+
+  // ---- v11 Unique classes ----
+  'class.eclipsemonarch': 'ราชันสุริยคราส', 'class.eclipsemonarch.tag': 'ผู้สวมมงกุฎเมื่อดวงตะวันดับ',
+  'class.hollowsaint': 'นักบุญกลวงเปล่า', 'class.hollowsaint.tag': 'ศรัทธาที่เหลือแต่เปลือก — และเปลือกนั้นไม่มีวันแตก',
+  'class.plagueempress': 'จักรพรรดินีมหันตโรค', 'class.plagueempress.tag': 'ทุกลมหายใจของนางคือโรคระบาด',
+  'class.voidreaver': 'ผู้เกี่ยวสุญตา', 'class.voidreaver.tag': 'คมเคียวที่เกี่ยวเอาความว่างเปล่า',
+  'class.dawnbreaker': 'ผู้หักรุ่งอรุณ', 'class.dawnbreaker.tag': 'ร้อยศึกในสังเวียนหลอมเขาขึ้นมา',
+  'class.gravemarshal': 'จอมพลหลุมศพ', 'class.gravemarshal.tag': 'กองทัพของเขาไม่เคยหลับ เพราะมันตายหมดแล้ว',
+  'class.runeprophet': 'ศาสดาอักขระ', 'class.runeprophet.tag': 'ผู้อ่านอักษรที่โลกพยายามลบ',
+  'class.nightsovereign': 'ราชาแห่งรัตติกาล', 'class.nightsovereign.tag': 'อาณาจักรของเขาเริ่มเมื่อเจ้าหลับตา',
+  'class.ashqueen': 'ราชินีเถ้าถ่าน', 'class.ashqueen.tag': 'ทุกอาณาจักรที่นางรักล้วนมอดไหม้',
+  'class.worldsedge': 'ผู้ยืน ณ ขอบโลก', 'class.worldsedge.tag': 'ผู้เดินไกลเกินกว่าแผนที่ใดจะตามทัน',
+
+  // ---- v11 signatures ----
+  'sig.sunder': 'ฉีกคำสาป', 'sig.sunder.desc': 'กรีดแผลต้องสาปที่กัดกินต่อเนื่อง พร้อมปลุกพลังโจมตีของตน',
+  'sig.cinderwall': 'กำแพงถ่านคุ', 'sig.cinderwall.desc': 'เสริมเกราะและคมดาบด้วยเถ้าลุกโชน พร้อมสมานแผลเล็กน้อย',
+  'sig.gravedraw': 'สูบวิญญาณหลุมศพ', 'sig.gravedraw.desc': 'โจมตีดูดกลืน — แผลของศัตรูคือยาของเจ้า',
+  'sig.lunareclipse': 'จันทรุปราคา', 'sig.lunareclipse.desc': 'หายวับไปในเงาจันทร์ แล้วกลับมาพร้อมคมมีดที่คมกว่าเดิม',
+  'sig.totaleclipse': 'สุริยคราสเต็มดวง', 'sig.totaleclipse.desc': 'การโจมตีครั้งถัดไปเป็นคริติคอลแน่นอน และพลังโจมตีพุ่งทะยาน',
+  'sig.hollowgrace': 'พรแห่งความกลวง', 'sig.hollowgrace.desc': 'ฟื้นพลังชีวิตมหาศาล เสริมเกราะและการดูดเลือด',
+  'sig.blightbloom': 'บุปผามหันตโรค', 'sig.blightbloom.desc': 'หว่านเชื้อโรคร้ายแรงที่สุดเท่าที่โลกเคยรู้จัก กัดกินสี่จังหวะ',
+  'sig.voidstep': 'ย่างก้าวสุญตา', 'sig.voidstep.desc': 'หายเข้าไปในความว่าง — การโจมตีถัดไปหลบไม่ได้และเป็นคริติคอล',
+  'sig.firstlight': 'แสงแรกแห่งรุ่ง', 'sig.firstlight.desc': 'สมานแผลและปลุกทั้งพลังโจมตีและความเร็วพร้อมกัน',
+  'sig.legionrise': 'กองทัพผงาด', 'sig.legionrise.desc': 'สูบกำลังจากศัตรูมาเลี้ยงกองทัพ พร้อมยกเกราะขึ้นตั้งรับ',
+  'sig.runecascade': 'อักขระถล่ม', 'sig.runecascade.desc': 'เกจอาคมพลุ่งพล่าน และอักขระเผาไหม้กัดกินศัตรู',
+  'sig.kingdomofnight': 'อาณาจักรรัตติกาล', 'sig.kingdomofnight.desc': 'กลืนหายเข้าเงามืด ทิ้งความมืดที่กัดกินไว้เบื้องหลัง',
+  'sig.pyrelight': 'เพลิงเชิงตะกอน', 'sig.pyrelight.desc': 'ทุกการโจมตีจุดไฟเผา และคมอาวุธร้อนแรงยิ่งขึ้น',
+  'sig.horizonfall': 'ขอบฟ้าพังทลาย', 'sig.horizonfall.desc': 'คริติคอลแน่นอน พร้อมปลุกทั้งดาบและโล่ให้ตื่นพร้อมกัน',
+
+  // ---- v11 hidden skills ----
+  'hidden.hexeater': 'ผู้กลืนอาถรรพ์', 'hidden.hexeater.desc': 'พิษและแผลไหม้ของเจ้ารุนแรงขึ้นเท่าตัว',
+  'hidden.emberheart': 'หัวใจถ่านคุ', 'hidden.emberheart.desc': 'เมื่อชีวิตต่ำ เกราะของเจ้าแกร่งขึ้นมหาศาล',
+  'hidden.tombpact': 'พันธสัญญาหลุมศพ', 'hidden.tombpact.desc': 'หนึ่งครั้งต่อศึก — ปฏิเสธความตายและลุกขึ้นพร้อมเลือดเกือบครึ่ง',
+  'hidden.silvershadow': 'เงาเงินยวง', 'hidden.silvershadow.desc': 'เริ่มทุกศึกโดยหายตัวในเงาจันทร์',
+  'hidden.crownofash': 'มงกุฎเถ้า', 'hidden.crownofash.desc': 'ศัตรูที่ใกล้ตายรับความเสียหายรุนแรงขึ้นมาก',
+  'hidden.emptyvessel': 'ภาชนะว่างเปล่า', 'hidden.emptyvessel.desc': 'หนึ่งครั้งต่อศึก — ความกลวงปฏิเสธความตาย ฟื้นเลือดมหาศาล',
+  'hidden.thousandsores': 'พันแผลเรื้อรัง', 'hidden.thousandsores.desc': 'โรคของเจ้าร้ายแรงขึ้นอีกครึ่งเท่า',
+  'hidden.edgeofnothing': 'คมแห่งความว่าง', 'hidden.edgeofnothing.desc': 'มีโอกาสสูงที่จะฟาดซ้ำในจังหวะเดียว',
+  'hidden.oathofdawn': 'คำสาบานรุ่งอรุณ', 'hidden.oathofdawn.desc': 'เมื่อชีวิตต่ำ พลังโจมตีลุกโชนดั่งตะวันแรก',
+  'hidden.deadmensoath': 'คำสาบานคนตาย', 'hidden.deadmensoath.desc': 'เมื่อชีวิตต่ำ กองทัพคนตายยกเกราะให้เจ้าเป็นเท่าตัว',
+  'hidden.openedeye': 'ดวงตาที่สาม', 'hidden.openedeye.desc': 'เริ่มทุกศึกด้วยเกจอาคมเต็มเปี่ยม',
+  'hidden.throneunseen': 'บัลลังก์ไร้เงา', 'hidden.throneunseen.desc': 'เริ่มทุกศึกโดยหายตัวในความมืด',
+  'hidden.cinderveil': 'ม่านถ่านแดง', 'hidden.cinderveil.desc': 'เปลวไฟของเจ้าเผาผลาญรุนแรงขึ้นมาก',
+  'hidden.lastcartographer': 'นักเขียนแผนที่คนสุดท้าย', 'hidden.lastcartographer.desc': 'มีโอกาสฟาดซ้ำ — เพราะขอบโลกสอนให้เจ้าไม่หยุดก้าว',
+});
+
+Object.assign(EN, {
+  // ---- v11 slots ----
+  'slot.head': 'Head', 'slot.armor': 'Chest', 'slot.legs': 'Legs', 'slot.boots': 'Boots',
+  'slot.ring': 'Ring', 'slot.necklace': 'Necklace', 'slot.bracelet': 'Bracelet',
+
+  // ---- v11 item bases ----
+  'item.helm': 'Iron Helm', 'item.hood': 'Shadow Hood', 'item.circlet': 'Circlet',
+  'item.greaves': 'Iron Greaves', 'item.leggings': 'Leather Leggings',
+  'item.sabatons': 'Sabatons', 'item.boots': 'Leather Boots', 'item.striders': 'Gale Striders',
+  'item.signet': 'Signet Ring', 'item.pendant': 'Pendant', 'item.bangle': 'Bangle',
+
+  // ---- v11 PvP rarity + Arena Honor set ----
+  'rarity.pvp': 'Honor',
+  'item.pvp.blade': 'Arena Blade', 'item.pvp.helm': 'Arena Helm', 'item.pvp.plate': 'Arena Plate',
+  'item.pvp.greaves': 'Arena Greaves', 'item.pvp.boots': 'Arena Boots',
+  'item.pvp.ring': 'Arena Ring', 'item.pvp.amulet': 'Arena Amulet', 'item.pvp.band': 'Arena Band',
+
+  // ---- v11 PvP points / Warden shop ----
+  'hud.pvpPoints': '🏅 {n}',
+  'pvp.ptsEarned': '🏅 +{n} Arena Points ({total} total)',
+  'pvpshop.title': 'The Arena Honor Vault',
+  'pvpshop.tagline': 'Blood spilled in the arena is never wasted.',
+  'pvpshop.balance': 'Your Arena Points: 🏅 {n}',
+  'pvpshop.note': 'Fine steel bought with blood and sweat — but the true legends still sleep in the deep lands and unseen hands.',
+  'pvpshop.cost': '🏅 {n} pts',
+  'pvpshop.buy': 'Redeem',
+  'pvpshop.bought': 'Received — stored in your Dimensional Bag.',
+  'pvpshop.noPoints': 'Not enough Arena Points — go spill more blood.',
+  'pvpshop.bagFull': 'Dimensional Bag is full — make room first.',
+
+  // ---- v11 NPC: Sastra the Arena Warden ----
+  'npc.warden.name': 'Sastra',
+  'npc.warden.title': 'Warden of the Blood Arena',
+  'npc.warden.lore': 'A champion of a hundred bouts who refused to die in the sand. They say when his last Heart shattered, the Capital refused his death — now he stands eternal at the arena gate, trading honor for steel with those who still breathe.',
+  'npc.warden.line1': '"Your blood has a price. I am the one who pays it."',
+  'npc.warden.line2': '"Do not ask how many times I have died... ask why I am still standing."',
+  'npc.warden.svc': 'Trade Arena Points for Honor equipment',
+  'npc.warden.open': 'Open the Honor Vault',
+
+  // ---- v11 creation: tiers ----
+  'create.locked': 'Not yet unlocked',
+  'create.tier.secret': 'Secret',
+  'create.tier.unique': 'Unique',
+  'create.secret.title': '— Secret Classes —',
+  'create.unique.title': '— Server-Unique Classes —',
+  'create.unique.rule': 'Each throne has exactly ONE holder across the entire server — if its holder permanently dies in the arena, the throne empties for anyone to claim.',
+  'create.unique.checking': 'Consulting the thrones...',
+  'create.unique.holder': 'This throne is held — {name}',
+  'create.unique.taken': 'One breath too slow — {name} has claimed this throne.',
+  'create.unique.claimError': 'Could not reach the arbiter of thrones — try again.',
+
+  // ---- v11 Sanity Curse ----
+  'sanity.onset.title': '🕯 The Sanity Curse',
+  'sanity.onset.body': 'You have walked deeper than a mortal mind can bear. The whispers begin gnawing at the edge of thought... From this day, spill blood in the arena at least once every 24 hours, or the curse will harvest your Hearts one by one.',
+  'sanity.tax.title': 'The Curse Collects',
+  'sanity.tax.body': 'You avoided the arena too long — the curse has harvested {n} Heart(s).',
+  'sanity.tax.died': 'The curse harvested {n} Heart(s)... including your last. Your journey ends in madness.',
+  'sanity.fed': '🕯 The curse has tasted blood — your sanity holds for another 24 hours.',
+  'sanity.hud.tip': 'Time left before the curse collects — fight one arena bout to reset it.',
+
+  // ---- v11 Secret classes ----
+  'class.cursebreaker': 'Cursebreaker', 'class.cursebreaker.tag': 'The hand that devours what others dare not touch',
+  'class.cursebreaker.hint': 'Cleanse that which is cursed three times... and the curse will remember your hand.',
+  'class.ashenknight': 'Ashen Knight', 'class.ashenknight.tag': 'Armor forged from the wreckage of the deep lands',
+  'class.ashenknight.hint': 'A Lord of the sixth danger... fell him, and wear his ashes.',
+  'class.gravewarden': 'Gravewarden', 'class.gravewarden.tag': 'One who drinks from their own grave',
+  'class.gravewarden.hint': 'When your first tombstone bears an heir, the Warden opens the gate.',
+  'class.moonveil': 'Moonveil', 'class.moonveil.tag': 'A blade the moonlight refuses to touch',
+  'class.moonveil.hint': 'She peddles hearts beneath the mist... buy one, just once.',
+
+  // ---- v11 Unique classes ----
+  'class.eclipsemonarch': 'Eclipse Monarch', 'class.eclipsemonarch.tag': 'Crowned the moment the sun dies',
+  'class.hollowsaint': 'Hollow Saint', 'class.hollowsaint.tag': 'Faith worn down to a shell — and the shell will not break',
+  'class.plagueempress': 'Plague Empress', 'class.plagueempress.tag': 'Every breath she takes is an epidemic',
+  'class.voidreaver': 'Void Reaver', 'class.voidreaver.tag': 'A scythe that harvests emptiness itself',
+  'class.dawnbreaker': 'Dawnbreaker', 'class.dawnbreaker.tag': 'A hundred arena bouts forged him',
+  'class.gravemarshal': 'Grave Marshal', 'class.gravemarshal.tag': 'His army never sleeps, for it is already dead',
+  'class.runeprophet': 'Rune Prophet', 'class.runeprophet.tag': 'Reader of the letters the world tried to erase',
+  'class.nightsovereign': 'Night Sovereign', 'class.nightsovereign.tag': 'His kingdom begins when you close your eyes',
+  'class.ashqueen': 'Ash Queen', 'class.ashqueen.tag': 'Every kingdom she loved burned to cinders',
+  'class.worldsedge': "World's Edge", 'class.worldsedge.tag': 'The one who walked farther than any map could follow',
+
+  // ---- v11 signatures ----
+  'sig.sunder': 'Curse Sunder', 'sig.sunder.desc': 'Carve a cursed wound that festers over time, and rouse your own attack.',
+  'sig.cinderwall': 'Cinderwall', 'sig.cinderwall.desc': 'Wreathe armor and blade in burning ash, mending a few wounds.',
+  'sig.gravedraw': 'Grave Draw', 'sig.gravedraw.desc': 'A devouring strike — the enemy\u2019s wound is your medicine.',
+  'sig.lunareclipse': 'Lunar Eclipse', 'sig.lunareclipse.desc': 'Vanish into the moon\u2019s shadow and return with a keener edge.',
+  'sig.totaleclipse': 'Total Eclipse', 'sig.totaleclipse.desc': 'Your next strike is a guaranteed critical, and your attack soars.',
+  'sig.hollowgrace': 'Hollow Grace', 'sig.hollowgrace.desc': 'Restore massive HP, bolstering armor and lifesteal.',
+  'sig.blightbloom': 'Blightbloom', 'sig.blightbloom.desc': 'Sow the deadliest plague the world has known, festering four beats.',
+  'sig.voidstep': 'Voidstep', 'sig.voidstep.desc': 'Step into nothing — your next strike cannot miss and must crit.',
+  'sig.firstlight': 'First Light', 'sig.firstlight.desc': 'Mend wounds and rouse both attack and speed at once.',
+  'sig.legionrise': 'Legion Rise', 'sig.legionrise.desc': 'Drain the enemy to feed your legion, raising your guard.',
+  'sig.runecascade': 'Rune Cascade', 'sig.runecascade.desc': 'Arcana surges, and burning runes gnaw at the enemy.',
+  'sig.kingdomofnight': 'Kingdom of Night', 'sig.kingdomofnight.desc': 'Melt into darkness, leaving a gnawing dark behind.',
+  'sig.pyrelight': 'Pyrelight', 'sig.pyrelight.desc': 'Every strike ignites, and your edge burns ever hotter.',
+  'sig.horizonfall': 'Horizonfall', 'sig.horizonfall.desc': 'A guaranteed critical, rousing sword and shield together.',
+
+  // ---- v11 hidden skills ----
+  'hidden.hexeater': 'Hexeater', 'hidden.hexeater.desc': 'Your poisons and burns strike twice as hard.',
+  'hidden.emberheart': 'Emberheart', 'hidden.emberheart.desc': 'At low HP, your armor hardens immensely.',
+  'hidden.tombpact': 'Tomb Pact', 'hidden.tombpact.desc': 'Once per battle — refuse death and rise with nearly half your blood.',
+  'hidden.silvershadow': 'Silver Shadow', 'hidden.silvershadow.desc': 'Begin every battle vanished in moonshadow.',
+  'hidden.crownofash': 'Crown of Ash', 'hidden.crownofash.desc': 'Dying enemies take vastly more damage.',
+  'hidden.emptyvessel': 'Empty Vessel', 'hidden.emptyvessel.desc': 'Once per battle — the hollowness refuses death, restoring massive HP.',
+  'hidden.thousandsores': 'A Thousand Sores', 'hidden.thousandsores.desc': 'Your plagues fester half again as fiercely.',
+  'hidden.edgeofnothing': 'Edge of Nothing', 'hidden.edgeofnothing.desc': 'A high chance to strike twice in one motion.',
+  'hidden.oathofdawn': 'Oath of Dawn', 'hidden.oathofdawn.desc': 'At low HP, your attack blazes like first light.',
+  'hidden.deadmensoath': "Dead Men's Oath", 'hidden.deadmensoath.desc': 'At low HP, the dead double your guard.',
+  'hidden.openedeye': 'The Opened Eye', 'hidden.openedeye.desc': 'Begin every battle with a full arcana gauge.',
+  'hidden.throneunseen': 'Throne Unseen', 'hidden.throneunseen.desc': 'Begin every battle vanished in darkness.',
+  'hidden.cinderveil': 'Cinderveil', 'hidden.cinderveil.desc': 'Your flames consume far more fiercely.',
+  'hidden.lastcartographer': 'The Last Cartographer', 'hidden.lastcartographer.desc': 'A chance to strike again — the world\u2019s edge taught you never to stop.',
+});

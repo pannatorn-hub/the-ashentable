@@ -498,3 +498,54 @@ h3 { font-family: var(--font-display); font-size: 1.05rem; margin: 0 0 8px; }
 @media (prefers-reduced-motion: reduce) {
   .macro-node.smuggler-hint .node-icon { animation: none; }
 }
+
+/* ==========================================================================
+   v11 — Secret/Unique class tiers, Sanity Curse, Arena Honor
+   ========================================================================== */
+
+/* Locked secret-class silhouette: dimmed, non-interactive, whispering a hint */
+.class-card.class-locked {
+  opacity: 0.75; cursor: default; filter: saturate(0.35);
+  border-style: dashed;
+}
+.class-card.class-locked:hover { transform: none; border-color: var(--slate-500); }
+.class-hint {
+  font-size: 0.8rem; font-style: italic; color: var(--parchment-dim);
+  margin: 8px 0 0; line-height: 1.5;
+}
+
+/* Tier badges pinned to the card corner */
+.class-card { position: relative; }
+.tier-badge {
+  position: absolute; top: 8px; right: 10px;
+  font-size: 0.66rem; letter-spacing: 0.06em; padding: 2px 8px;
+  border-radius: 999px; border: 1px solid currentColor;
+}
+.tier-badge-secret { color: #9d7bd8; background: rgba(125, 95, 211, 0.12); }
+.tier-badge-unique { color: var(--gold-bright); background: rgba(224, 185, 89, 0.12); }
+.class-card.tier-secret { border-color: rgba(125, 95, 211, 0.55); }
+.class-card.tier-unique { border-color: rgba(224, 185, 89, 0.6); box-shadow: 0 0 18px rgba(224, 185, 89, 0.12); }
+
+.create-tier-title { margin: 26px 0 4px; letter-spacing: 0.08em; }
+.tier-title-secret { color: #9d7bd8; }
+.tier-title-unique { color: var(--gold-bright); }
+
+/* The Sanity Curse: candle-red kin of the awaken banner */
+.sanity-banner {
+  width: 100%; max-width: 720px; display: flex; align-items: center; gap: 14px;
+  background: linear-gradient(180deg, rgba(139, 26, 61, 0.22), rgba(20, 18, 28, 0.94));
+  border: 1px solid #8b1a3d; border-radius: var(--radius-card);
+  padding: 14px 20px; margin-bottom: 18px;
+  box-shadow: var(--shadow-deep), 0 0 22px rgba(139, 26, 61, 0.3);
+  text-align: left;
+}
+.sanity-banner .awaken-icon { color: #d4526e; }
+.sanity-banner-tax { animation: sanity-pulse 1.6s ease-in-out 3; }
+@keyframes sanity-pulse {
+  0%, 100% { box-shadow: var(--shadow-deep), 0 0 22px rgba(139, 26, 61, 0.3); }
+  50% { box-shadow: var(--shadow-deep), 0 0 34px rgba(212, 82, 110, 0.55); }
+}
+
+/* HUD chips: sanity countdown burns quiet red; arena points glint */
+.hud-sanity { color: #d4526e; font-variant-numeric: tabular-nums; }
+.hud-pvp-points { color: var(--gold-bright); }

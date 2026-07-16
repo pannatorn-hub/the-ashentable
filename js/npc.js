@@ -20,7 +20,7 @@
 
 import { t } from './i18n.js';
 import { bagCapacity, BAG_MAX_UPGRADES, largestMaterialStack, spendMaterialsOfOneKind } from './inventory.js';
-import { createEquipment, createCursedEquipment, EquipmentSlot, Rarity, salvageValue, cleanseCurse } from './equipment.js';
+import { createEquipment, createCursedEquipment, EquipmentSlot, Rarity, salvageValue, cleanseCurse, rollLootSlot } from './equipment.js';
 import { STARTING_HEARTS } from './player.js';
 
 export const NPCS = Object.freeze({
@@ -29,6 +29,9 @@ export const NPCS = Object.freeze({
   krom: { id: 'krom', location: { zoneIndex: 1 }, service: 'reforge' },
   mara: { id: 'mara', location: { zoneIndex: 4 }, service: 'peddler' },
   smuggler: { id: 'smuggler', location: 'wandering', service: 'smuggler' }, // v6
+  // v11: ผู้คุมสังเวียน — the Arena Warden. Capital only, sells the Arena
+  // Honor set for PvP Points (gameController.renderPvpShop / PVP_SET).
+  warden: { id: 'warden', location: 'capital', service: 'pvpshop' },
 });
 
 export function npcName(npc) { return t(`npc.${npc.id}.name`); }
@@ -147,10 +150,9 @@ export function reforgeWeapon(player) {
 
 /** 3 guaranteed rare/epic items at a 1.6x markup (pricing handled by town.js). */
 export function peddlerStock(playerLevel) {
-  const slots = Object.values(EquipmentSlot);
   return Array.from({ length: 3 }, () => {
     const rarity = Math.random() < 0.35 ? Rarity.EPIC : Rarity.RARE;
-    return createEquipment(slots[Math.floor(Math.random() * slots.length)], playerLevel, rarity);
+    return createEquipment(rollLootSlot(), playerLevel, rarity); // v11: accessory scarcity applies in shops too
   });
 }
 
@@ -172,10 +174,9 @@ export function smugglerPriceFor(item, playerLevel) {
 
 /** Fresh black-market stock: 2 Epic-tier goods + 1-2 Cursed items, each with its own price tag. Returns [{ item, price }]. */
 export function smugglerStock(playerLevel) {
-  const slots = Object.values(EquipmentSlot);
   const entries = [];
   for (let i = 0; i < 2; i += 1) {
-    const item = createEquipment(slots[Math.floor(Math.random() * slots.length)], playerLevel, Rarity.EPIC);
+    const item = createEquipment(rollLootSlot(), playerLevel, Rarity.EPIC); // v11: weighted slots
     entries.push({ item, price: smugglerPriceFor(item, playerLevel) });
   }
   const cursedCount = 1 + Math.floor(Math.random() * 2); // 1-2

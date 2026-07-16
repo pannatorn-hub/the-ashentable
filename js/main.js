@@ -58,6 +58,10 @@ async function getServices() {
         leaderboard: new fb.FirebaseLeaderboardService(),
         saveFn: fb.savePlayerData,
         loadFn: fb.loadPlayerData,
+        // v11: server-wide Highlander arbitration + account-ledger cloud mirror
+        uniqueRegistry: new fb.FirebaseUniqueRegistry(),
+        saveAccountFn: fb.saveAccountData,
+        loadAccountFn: fb.loadAccountData,
       };
     } catch (err) {
       console.warn('Firebase unavailable — falling back to local mode:', err.message);
@@ -183,6 +187,17 @@ async function boot(user, svc) {
     Promise.resolve(svc.saveFn(user.id, savedState)).catch((err) => console.warn('cloud heal failed', err));
   }
 
+  // v11: with a cloud backend, reconcile the account ledger (per-counter
+  // MAX merge — counters only ever grow) BEFORE the controller reads it to
+  // decide which Secret/Unique classes this account has earned.
+  if (svc.loadAccountFn) {
+    try {
+      const { loadAccount, mergeAccounts, saveAccount } = await import('./progression.js');
+      const cloudAcc = await svc.loadAccountFn(user.id);
+      if (cloudAcc) saveAccount(mergeAccounts(loadAccount(), cloudAcc));
+    } catch (err) { console.warn('account ledger sync failed — using local ledger', err); }
+  }
+
   window.gameController = new GameController({
     user,
     auth: svc.auth,
@@ -191,6 +206,8 @@ async function boot(user, svc) {
     leaderboard: svc.leaderboard,
     saveFn: svc.saveFn,
     recoveredFromMirror,
+    uniqueRegistry: svc.uniqueRegistry || null, // v11
+    saveAccountFn: svc.saveAccountFn || null,   // v11
   });
   localStorage.setItem(ACTIVE_TAB_KEY, TAB_TOKEN); // claim AFTER a successful boot
 }

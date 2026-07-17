@@ -352,18 +352,47 @@ export function buildCharacterRig(THREE, spec) {
   rig.add(weapon);
 
   // --- v13 paper-doll gear meshes: hidden until applyGear() shows them ---
+  // v13.1: slot keys now match EquipmentSlot EXACTLY — the chest slot's real
+  // id is the legacy 'armor' (save compatibility), which is why chest pieces
+  // never appeared on the model before. Pieces are also much chunkier now:
+  // gear you equip should be readable at a glance, AFK-Journey style.
   const gear = {
-    head: mesh(THREE, new THREE.CylinderGeometry(0.43, 0.45, 0.16, 12), m.metal, 0, 1.5, 0),
-    chest: mesh(THREE, new THREE.CylinderGeometry(0.37 * b, 0.44 * b, 0.5, 10), m.armor, 0, 0.78, 0),
-    legs: mesh(THREE, new THREE.CylinderGeometry(0.36 * b, 0.44 * b, 0.28, 10), m.armor, 0, 0.42, 0),
-    boots: mesh(THREE, new THREE.BoxGeometry(0.5 * b, 0.12, 0.34), m.armorDark, 0, 0.04, 0.04),
-    necklace: mesh(THREE, new THREE.TorusGeometry(0.18, 0.03, 6, 12), m.glow, 0, 1.05, 0.3),
-    ring: mesh(THREE, new THREE.TorusGeometry(0.06, 0.02, 6, 10), m.glow, 0.55 * b, 0.52, 0.1),
-    bracelet: mesh(THREE, new THREE.TorusGeometry(0.11, 0.025, 6, 10), m.metal, -0.45 * b, 0.72, 0),
-    weapon: mesh(THREE, new THREE.SphereGeometry(0.09, 8, 6), m.glow, 0.55 * b, 1.2, 0.1),
+    head: (() => { // a proper dome helm with a crest, sitting over the cap
+      const helm = new THREE.Group();
+      helm.add(mesh(THREE, new THREE.SphereGeometry(0.46, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.58), m.metal, 0, 0, 0));
+      helm.add(mesh(THREE, new THREE.BoxGeometry(0.07, 0.2, 0.5), m.metal, 0, 0.28, 0));
+      helm.position.set(0, 1.42, 0);
+      return helm;
+    })(),
+    armor: (() => { // chest plate + belt line
+      const pl = new THREE.Group();
+      pl.add(mesh(THREE, new THREE.CylinderGeometry(0.39 * b, 0.47 * b, 0.55, 10), m.armor, 0, 0, 0));
+      pl.add(mesh(THREE, new THREE.CylinderGeometry(0.44 * b, 0.46 * b, 0.09, 10), m.metal, 0, -0.3, 0));
+      pl.position.set(0, 0.8, 0);
+      return pl;
+    })(),
+    legs: mesh(THREE, new THREE.CylinderGeometry(0.4 * b, 0.48 * b, 0.3, 10), m.armor, 0, 0.42, 0),
+    boots: (() => {
+      const bo = new THREE.Group();
+      bo.add(mesh(THREE, new THREE.BoxGeometry(0.22 * b, 0.16, 0.36), m.metal, -0.16 * b, 0, 0.05));
+      bo.add(mesh(THREE, new THREE.BoxGeometry(0.22 * b, 0.16, 0.36), m.metal, 0.16 * b, 0, 0.05));
+      bo.position.set(0, 0.06, 0);
+      return bo;
+    })(),
+    necklace: mesh(THREE, new THREE.TorusGeometry(0.2, 0.035, 6, 14), m.glow, 0, 1.02, 0.32),
+    ring: mesh(THREE, new THREE.TorusGeometry(0.08, 0.028, 6, 10), m.glow, 0.55 * b, 0.5, 0.12),
+    bracelet: mesh(THREE, new THREE.TorusGeometry(0.13, 0.035, 6, 10), m.metal, -0.44 * b, 0.7, 0),
+    weapon: (() => { // an aura ring around the held weapon — rarity-colored
+      const ring = mesh(THREE, new THREE.TorusGeometry(0.26, 0.03, 6, 16), m.glow, 0.55 * b, 1.0, 0.1);
+      ring.rotation.x = Math.PI / 2;
+      return ring;
+    })(),
   };
   gear.necklace.rotation.x = Math.PI / 2.4;
   gear.bracelet.rotation.z = Math.PI / 2;
+  // glow-based pieces must never go dark from a muted rarity color —
+  // applyGear lifts their lightness (common-grey aura was invisible before)
+  [gear.necklace, gear.ring, gear.weapon].forEach((g) => { g.userData.keepBright = true; });
   Object.entries(gear).forEach(([slot, g]) => {
     g.name = `gear_${slot}`;
     g.visible = false;
@@ -376,19 +405,26 @@ export function buildCharacterRig(THREE, spec) {
 
 /**
  * Reflect the 8-slot paper-doll on the model: equipping shows the slot's
- * mesh, tinted by the item's rarity color when available. Passing null
- * hides everything (fresh characters, class-select previews).
+ * mesh (or mesh group), tinted by the item's rarity color when available.
+ * Glow pieces marked keepBright get a lightness lift so a muted common-grey
+ * rarity can never render them invisible. Passing null hides everything
+ * (fresh characters, class-select previews).
  */
 export function applyGear(rig, equipment) {
-  rig.traverse((o) => {
-    if (!o.name || !o.name.startsWith('gear_')) return;
-    const slot = o.name.slice(5);
+  rig.children.forEach((root) => {
+    if (!root.name || !root.name.startsWith('gear_')) return;
+    const slot = root.name.slice(5);
     const item = equipment && equipment[slot];
-    o.visible = !!item;
-    if (item && item.rarity && item.rarity.color && o.material && o.material.color) {
+    root.visible = !!item;
+    const color = item && item.rarity && item.rarity.color;
+    if (!color) return;
+    const bright = !!root.userData.keepBright;
+    root.traverse((o) => {
+      if (!o.material || !o.material.color) return;
       o.material = o.material.clone();
-      o.material.color.set(item.rarity.color);
-    }
+      o.material.color.set(color);
+      if (bright) o.material.color.offsetHSL(0, 0.1, 0.22);
+    });
   });
 }
 
@@ -412,8 +448,10 @@ export function animateRig(rig, t, phase = 0) {
 // ---------------- shared lighting recipe ----------------
 
 function addStageLights(THREE, scene, tint) {
-  scene.add(new THREE.HemisphereLight(0x7a6f9a, 0x1a1420, 0.9));
-  const key = new THREE.DirectionalLight(0xf0e6d8, 1.15);
+  // v13.1: lifted ~15% — dark class tints (gravewarden green, warlock
+  // violet) were reading as near-black silhouettes on the doll screen.
+  scene.add(new THREE.HemisphereLight(0x8a7fae, 0x201a28, 1.05));
+  const key = new THREE.DirectionalLight(0xf0e6d8, 1.35);
   key.position.set(2.5, 4, 3);
   scene.add(key);
   const rim = new THREE.DirectionalLight(new THREE.Color(tint || '#8a7ad0'), 0.8);

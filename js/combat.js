@@ -238,7 +238,12 @@ function applySignature(bs) {
         break;
       case 'drain': {
         const eStats = effectiveStats(bs, 'enemy');
-        const raw = stats.atk * fx.pct;
+        // v13.1 NaN FIX: the base necromancer drain ships `pct: 0.6`, but the
+        // v11 Secret/Apex drains (gravedraw, legionrise) ship `mult` — reading
+        // only fx.pct made raw = atk × undefined = NaN, and healEntity then
+        // poisoned BOTH hp pools with NaN for the rest of the battle (and the
+        // save, if it persisted). Accept either key, with a sane fallback.
+        const raw = stats.atk * (fx.pct ?? fx.mult ?? 1);
         const dmg = Math.max(1, Math.round(raw * (1 - eStats.def / (eStats.def + DEF_CONSTANT))));
         bs.enemy.hp = Math.max(0, bs.enemy.hp - dmg);
         healEntity(bs, 'player', dmg);

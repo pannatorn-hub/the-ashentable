@@ -62,6 +62,10 @@ export async function initVisual3D(rootEl) {
     const host = document.createElement('div');
     host.className = 'doll-stage3d';
     center.prepend(host);
+    // v13.1: the live model IS the portrait now — flag the container so
+    // scene3d.css hides the old 2D SVG circle beneath it (it comes back
+    // automatically in 2D-fallback mode, where this code never runs).
+    center.classList.add('has-stage3d');
     dollStage = new CharacterStage(THREE, host, rigSpecFromPortrait(p.portrait), {
       equipment: p.equipment,
     });
@@ -96,7 +100,10 @@ export async function initVisual3D(rootEl) {
       enemy: stageEl.querySelector('.combatant.enemy .hp-fill'),
     };
     const lastW = {};
-    const readW = (el) => parseFloat((el.style.width || '100').replace('%', ''));
+    const readW = (el) => {
+      const w = parseFloat((el.style.width || '100').replace('%', ''));
+      return Number.isFinite(w) ? w : 100; // never let a NaN bar poison the fx
+    };
     for (const side of ['player', 'enemy']) {
       if (fills[side]) {
         lastW[side] = readW(fills[side]);

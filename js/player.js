@@ -286,6 +286,10 @@ export class Player {
     p.pvpMatches = data.pvpMatches || 0;
     p.sanityCursed = !!data.sanityCursed;
     p.lastPvpAt = data.lastPvpAt ?? null;
+    // v13.1-save heal: the drain-NaN bug (fixed in combat.js) could persist
+    // hp: NaN into a save, bricking every later battle. One finite check on
+    // load repairs any wounded save silently.
+    if (!Number.isFinite(p.hp)) p.hp = p.getStats().maxHp;
     return p;
   }
 }

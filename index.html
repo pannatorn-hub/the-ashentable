@@ -7,6 +7,17 @@
   <link rel="stylesheet" href="css/style.css" />
   <link rel="stylesheet" href="css/animations.css" /><!-- v7: combat cue library -->
   <link rel="stylesheet" href="css/scene3d.css" /><!-- v13: three.js 2.5D layer -->
+  <!-- v15: import map — lets ES modules resolve bare "three" and the addon
+       loaders (GLTFLoader/SkeletonUtils) straight from the CDN, which is what
+       makes real glTF character models possible with zero build step. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
 
 </head>
 <body>

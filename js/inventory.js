@@ -31,9 +31,29 @@ export function removeFromBag(player, itemId) {
 
 // ---------------- Zone materials ----------------
 
+// v14: the material vault is finite, like the bag — and upgradeable the same
+// way (Vesper, Capital). The cap applies PER MATERIAL TYPE (per zone stack).
+export const MAT_BASE_CAPACITY = 30;
+export const MAT_PER_UPGRADE = 15;
+export const MAT_MAX_UPGRADES = 5;
+
+export function materialCapacity(player) {
+  return MAT_BASE_CAPACITY + (player.matUpgrades || 0) * MAT_PER_UPGRADE;
+}
+
+/**
+ * v14: gains clamp to the per-type cap. Returns { added, overflow } so the
+ * UI can tell the player what spilled. Stacks that were already OVER the cap
+ * (pre-v14 saves) are grandfathered — we never destroy what a player owns,
+ * the cap only gates new gains.
+ */
 export function addMaterial(player, zoneIndex, amount) {
   const key = `z${zoneIndex}`;
-  player.materials[key] = (player.materials[key] || 0) + amount;
+  const cap = materialCapacity(player);
+  const cur = player.materials[key] || 0;
+  const added = Math.max(0, Math.min(amount, cap - cur));
+  if (added > 0) player.materials[key] = cur + added;
+  return { added, overflow: amount - added };
 }
 
 export function materialCount(player, zoneIndex) {

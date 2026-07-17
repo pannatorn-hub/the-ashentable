@@ -66,9 +66,17 @@ export class Player {
     this.bag = [];
     this.materials = {};
     this.bagUpgrades = 0;
+    this.matUpgrades = 0;          // v14: material-vault upgrades (Vesper)
     this.visionRange = 1;          // micro (per-region) fog of war — currently fixed, no upgrade path
     this.worldVisionRange = 1;     // macro (World Map Viewer) fog of war — upgraded by Isra (npc.js)
     this.renameCount = 0; // first rename is free; further renames are gated
+
+    // v14: a per-CHARACTER id, distinct from userId. The leaderboard uses it
+    // to tell "same hero got stronger" (merge peaks) from "the hero died and
+    // this is the heir" (replace the ghost entry outright).
+    this.charId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `c${Date.now().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`;
 
     // v6: the class's Hidden Unique Skill starts dormant.
     this.hiddenAwakened = false;
@@ -224,8 +232,8 @@ export class Player {
       maxCP: this.maxCP, maxZone: this.maxZone,
       equipment: { ...this.equipment }, hearts: this.hearts, isDead: this.isDead,
       hp: this.hp, isLegacyChild: this.isLegacyChild,
-      gold: this.gold, bag: this.bag, materials: { ...this.materials },
-      bagUpgrades: this.bagUpgrades, visionRange: this.visionRange,
+      gold: this.gold, bag: this.bag, materials: { ...this.materials }, charId: this.charId,
+      bagUpgrades: this.bagUpgrades, matUpgrades: this.matUpgrades, visionRange: this.visionRange,
       worldVisionRange: this.worldVisionRange,
       renameCount: this.renameCount,
       hiddenAwakened: this.hiddenAwakened,
@@ -275,6 +283,8 @@ export class Player {
     p.bag = Array.isArray(data.bag) ? data.bag : [];
     p.materials = data.materials || {};
     p.bagUpgrades = data.bagUpgrades || 0;
+    p.matUpgrades = data.matUpgrades || 0;               // v14-save migration
+    p.charId = data.charId || 'gen0'; // v14: pre-v14 characters share the 'gen0' sentinel
     p.visionRange = data.visionRange || 1;
     p.worldVisionRange = data.worldVisionRange || 1; // v5-save migration
     p.renameCount = data.renameCount || 0;

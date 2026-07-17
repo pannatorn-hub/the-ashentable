@@ -166,6 +166,10 @@ const TH = {
 
   // ---- Leaderboard ----
   'lb.title': '🏅 กระดานอันดับ',
+  'lb.season': 'ซีซั่น: {name}',
+  'season.name.preseason': 'พรีซีซั่น (ช่วงทดสอบ)',
+  'season.noEnd': 'ยังไม่กำหนดวันสิ้นสุด — สถิติจะถูกรีเซ็ตเมื่อซีซั่นจริงเริ่มต้น',
+  'season.endsAt': 'สิ้นสุด {date}',
   'lb.byCP': 'เรียงตามพลังรบสูงสุด',
   'lb.byZone': 'เรียงตามโซนสูงสุด',
   'lb.rank': 'อันดับ',
@@ -346,6 +350,8 @@ Object.assign(TH, {
   'bag.empty': 'ว่างเปล่า — มีแต่เสียงสะท้อนจากมิติอื่น',
   'bag.equipped': 'สวมใส่อยู่',
   'bag.materials': 'วัสดุ',
+  'bag.matCap': 'คลังวัสดุ (สูงสุด {cap} ต่อชนิด)',
+  'event.matFull': 'คลังวัสดุเต็ม — ของ {n} ชิ้นร่วงหล่นสู่เถ้าธุลี',
   'bag.full.autoSold': 'ถุงมิติเต็ม! {item} สลายเป็นทอง (+{n})',
   'bag.compare': 'เปรียบเทียบ',
   'bag.equip': 'สวมใส่',
@@ -368,6 +374,9 @@ Object.assign(TH, {
   'npc.vesper.line1': '"ถุงของเจ้าน่ะหรือ... มันไม่ได้เล็กหรอก เจ้าต่างหากที่ยังไม่รู้จักความว่างเปล่าดีพอ"',
   'npc.vesper.line2': '"เอาวัสดุจากแดนเถื่อนมา ข้าจะเย็บรอยแยกมิติให้กว้างขึ้น... เหมือนที่มันเย็บร่างข้า"',
   'npc.vesper.svc': 'ขยายถุงมิติ +2 ช่อง',
+  'npc.vesper.matSvc': 'ขยายคลังวัสดุ +15 ต่อชนิด',
+  'npc.vesper.matCost': 'ค่าทอผนึกคลัง: {n} ทอง',
+  'npc.vesper.matFull': 'คลังวัสดุถูกขยายถึงขีดสุดแล้ว',
   'npc.vesper.cost': 'ราคา: วัสดุชนิดเดียวกัน {n} ชิ้น',
 
   'npc.isra.name': 'อิศรา', 'npc.isra.title': 'ผู้สอดแนมเนตรดับ',
@@ -415,6 +424,7 @@ Object.assign(TH, {
   'rename.err.short': 'ชื่อต้องยาวอย่างน้อย 2 ตัวอักษร',
   'rename.err.same': 'ชื่อใหม่ซ้ำกับชื่อเดิม',
   'rename.err.taken': 'ชื่อนี้ถูกใช้แล้ว — โปรดเลือกชื่ออื่น',
+  'create.err.taken': 'ชื่อนี้มีเจ้าของแล้วในดินแดน — รวมถึงตำนานผู้ล่วงลับบนกระดานอันดับ โปรดตั้งชื่อใหม่',
   'rename.success': 'บัดนี้โลกจะจดจำเจ้าในนาม "{name}"',
 
   'lootgate.title': 'ของที่ร่วงจากศัตรู',
@@ -726,6 +736,10 @@ const EN = {
 
   // ---- Leaderboard ----
   'lb.title': '🏅 Leaderboard',
+  'lb.season': 'Season: {name}',
+  'season.name.preseason': 'Preseason (test period)',
+  'season.noEnd': 'No end date scheduled — records reset when the first real season begins',
+  'season.endsAt': 'Ends {date}',
   'lb.byCP': 'Sort by Highest Combat Power',
   'lb.byZone': 'Sort by Deepest Zone',
   'lb.rank': 'Rank',
@@ -904,6 +918,8 @@ Object.assign(EN, {
   'bag.empty': 'Empty — only echoes from other dimensions remain',
   'bag.equipped': 'Equipped',
   'bag.materials': 'Materials',
+  'bag.matCap': 'Material Vault (max {cap} per type)',
+  'event.matFull': 'The vault is full — {n} spilled into the ash',
   'bag.full.autoSold': 'Bag full! {item} was salvaged for gold (+{n})',
   'bag.compare': 'Compare',
   'bag.equip': 'Equip',
@@ -926,6 +942,9 @@ Object.assign(EN, {
   'npc.vesper.line1': '"Your bag? It isn\u2019t small. You simply don\u2019t understand emptiness well enough yet."',
   'npc.vesper.line2': '"Bring me material from the wilds, and I\u2019ll stitch the dimensional tear a little wider... the same way it was stitched into me."',
   'npc.vesper.svc': 'Expand Dimensional Bag +2 slots',
+  'npc.vesper.matSvc': 'Expand Material Vault +15 per type',
+  'npc.vesper.matCost': 'Vault-weaving fee: {n} gold',
+  'npc.vesper.matFull': 'The material vault is already at its limit',
   'npc.vesper.cost': 'Cost: {n} of the same material',
 
   'npc.isra.name': 'Isra', 'npc.isra.title': 'The Blind-Eyed Scout',
@@ -973,6 +992,7 @@ Object.assign(EN, {
   'rename.err.short': 'Name must be at least 2 characters long',
   'rename.err.same': 'New name matches your current name',
   'rename.err.taken': 'This name is already taken — please choose another',
+  'create.err.taken': 'This name already belongs to someone in the realm — including fallen legends on the leaderboard. Choose a new name.',
   'rename.success': 'The world will now remember you as "{name}"',
 
   'lootgate.title': 'Loot from the Fallen',

@@ -1,4 +1,6 @@
 // firebase-service.js
+import { seasonCollection } from './season.js'; // v14: season-scoped boards
+import { mergeEntry } from './leaderboard.js';  // v14: shared charId merge rule
 // ---------------------------------------------------------------------------
 // Backend-as-a-Service layer (Firebase). Complete, ready-to-use functions for:
 //   - Auth:        Google Login (FirebaseAuthProvider — same contract as
@@ -26,6 +28,12 @@
 //     match /databases/{database}/documents {
 //       match /saves/{uid} {
 //         allow read, write: if request.auth != null && request.auth.uid == uid;
+//       }
+//       // v14: future seasons write to leaderboard_<seasonId> — this wildcard
+//       // rule covers the legacy board AND every season collection:
+//       match /{board}/{uid} {
+//         allow read: if board.matches('leaderboard(_.*)?');
+//         allow write: if board.matches('leaderboard(_.*)?') && request.auth.uid == uid;
 //       }
 //       match /leaderboard/{uid} {
 //         allow read: if true; // public leaderboard
@@ -180,25 +188,25 @@ export async function loadPlayerData(uid) {
 
 /** Same interface as LocalLeaderboardService (leaderboard.js). */
 export class FirebaseLeaderboardService {
-  /** Upserts the user's best scores, never lowering an existing record. */
+  /**
+   * Upserts the user's scores. v14: merge is charId-aware (see
+   * leaderboard.js mergeEntry) — same character keeps its peak, an heir
+   * after permadeath REPLACES the fallen character's entry, and everything
+   * is written into the current season's collection.
+   */
   async submit(entry) {
     requireInit();
-    const ref = fns.doc(db, 'leaderboard', entry.userId);
+    const ref = fns.doc(db, seasonCollection(), entry.userId);
     const snap = await fns.getDoc(ref);
-    const prev = snap.exists() ? snap.data() : { maxCP: 0, maxZone: 0 };
-    await fns.setDoc(ref, {
-      name: entry.name,
-      classId: entry.classId,
-      maxCP: Math.max(prev.maxCP || 0, entry.maxCP || 0),
-      maxZone: Math.max(prev.maxZone || 0, entry.maxZone || 0),
-      updatedAt: fns.serverTimestamp(),
-    });
+    const prev = snap.exists() ? snap.data() : null;
+    const { userId, ...doc } = mergeEntry(prev, entry);
+    await fns.setDoc(ref, { ...doc, updatedAt: fns.serverTimestamp() });
   }
 
   /** Top N players ordered by maxCP or maxZone (descending). */
   async fetch({ by = 'maxCP', limit: n = 20 } = {}) {
     requireInit();
-    const q = fns.query(fns.collection(db, 'leaderboard'), fns.orderBy(by, 'desc'), fns.limit(n));
+    const q = fns.query(fns.collection(db, seasonCollection()), fns.orderBy(by, 'desc'), fns.limit(n));
     const snap = await fns.getDocs(q);
     return snap.docs.map((d) => ({ userId: d.id, ...d.data() }));
   }
@@ -221,7 +229,7 @@ export async function findPvpOpponent(myUid, myCP, tolerance = 0.15) {
   const lo = Math.floor(myCP * (1 - tolerance));
   const hi = Math.ceil(myCP * (1 + tolerance));
   const q = fns.query(
-    fns.collection(db, 'leaderboard'),
+    fns.collection(db, seasonCollection()), // v14: only fight ghosts from the current season
     fns.where('maxCP', '>=', lo),
     fns.where('maxCP', '<=', hi),
     fns.limit(25)

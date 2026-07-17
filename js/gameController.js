@@ -54,6 +54,8 @@
 //      gone. doRename() is unchanged and still fires from there.
 // ---------------------------------------------------------------------------
 
+import { SEASON } from './season.js';
+import { isNameTaken } from './leaderboard.js';
 import { t, setLanguage } from './i18n.js';
 import { Player, ALL_STATS, className, classTagline, signatureName, signatureDesc, STARTING_HEARTS } from './player.js';
 import {
@@ -84,10 +86,10 @@ import {
 } from './equipment.js';
 import { executeSacrifice } from './altar.js';
 import { saveGameState, isGuest, migrateGuestToFirebase } from './auth.js';
-import { bagCapacity, addToBag, removeFromBag, addMaterial, compareItems, disintegrate } from './inventory.js';
+import { bagCapacity, materialCapacity, addToBag, removeFromBag, addMaterial, compareItems, disintegrate } from './inventory.js';
 import {
   NPCS, npcsAt, npcName, npcTitle, npcLore, npcLines,
-  canUpgradeBag, upgradeBag, bagUpgradeCost,
+  canUpgradeBag, canUpgradeMaterials, matUpgradeCost, upgradeMaterialVault, upgradeBag, bagUpgradeCost,
   canUpgradeVision, upgradeVision, visionUpgradeCost, VISION_MAX,
   canReforge, reforgeWeapon, reforgeCost,
   canCleanseCurse, performCleanseCurse, cleanseCost, // v12: cost scales with level/CP
@@ -291,7 +293,8 @@ export class GameController {
     this._drainSaves();
     if (this.leaderboard) {
       Promise.resolve(this.leaderboard.submit({
-        userId: this.user.id, name: this.player.name, classId: this.player.classId,
+        userId: this.user.id, charId: this.player.charId, // v14: heir detection
+        name: this.player.name, classId: this.player.classId,
         maxCP: this.player.maxCP, maxZone: this.player.maxZone,
       })).catch((err) => console.error('leaderboard submit failed', err));
     }
@@ -325,6 +328,7 @@ export class GameController {
       case 'goto-npc': this.activeNpcId = a.npc; this.npcNotice = null; this.goTo('npc'); break;
       case 'npc-back': this.goTo(this.placeScreen()); break;
       case 'npc-upgrade-bag': this.doNpcService('bag'); break;
+      case 'npc-upgrade-mats': this.doNpcService('matbag'); break; // v14
       case 'npc-upgrade-vision': this.doNpcService('vision'); break;
       case 'npc-reforge': this.doNpcService('reforge'); break;
       case 'npc-cleanse-curse': this.doCleanseCurse(a.item); break; // v6
@@ -462,6 +466,23 @@ export class GameController {
     const name = nameInput ? nameInput.value.trim() : '';
     if (!this.selectedClassId || !name) return;
     this.createError = null;
+
+    // v14 NAME UNIQUENESS. One name, one soul, per season — INCLUDING the
+    // caller's own fallen character on the board (no excludeUserId here).
+    // That's the fix for "reborn with the old name, board still shows the
+    // ghost": the old name simply can't be claimed again, so an heir always
+    // enters the board as a distinct, fresh entry. Offline/fetch failure
+    // fails open, same policy as doRename — a network hiccup never blocks play.
+    if (this.leaderboard) {
+      try {
+        const entries = await this.leaderboard.fetch({ by: 'maxCP', limit: 100 });
+        if (isNameTaken(entries, name, null)) {
+          this.createError = t('create.err.taken');
+          this.render();
+          return;
+        }
+      } catch { /* fail open */ }
+    }
 
     // v11: server-side truth check — a locked class id smuggled into
     // selectedClassId (devtools) is refused here, not just hidden in the UI.
@@ -770,8 +791,8 @@ export class GameController {
     if (node.type === NodeType.EVENT) {
       // เปลี่ยนจากแจกทอง เป็นแจกวัตถุดิบ (Materials)
       const mats = 1 + Math.floor(Math.random() * 2);
-      addMaterial(this.player, zone.index, mats);
-      this.lastResult = { kind: 'event_mat', mats, zoneIndex: zone.index };
+      const gain = addMaterial(this.player, zone.index, mats); // v14: vault-capped
+      this.lastResult = { kind: 'event_mat', mats: gain.added, matOverflow: gain.overflow, zoneIndex: zone.index };
       this.markNodeCleared(node);
       this.goTo('event_result');
       return;
@@ -810,8 +831,7 @@ export class GameController {
     if (this.leaderboard) {
       try {
         const entries = await this.leaderboard.fetch({ by: 'maxCP', limit: 100 });
-        taken = entries.some((e) => e.userId !== this.user.id
-          && (e.name || '').trim().toLowerCase() === newName.toLowerCase());
+        taken = isNameTaken(entries, newName, this.user.id); // v14: shared rule with creation
       } catch { taken = false; } // offline: don't block the rename on a network hiccup
     }
     if (taken) { this.renameError = t('rename.err.taken'); this.render(); return; }
@@ -933,8 +953,8 @@ export class GameController {
     const leveledUp = this.player.gainXp(xp);
     const gold = goldDropFor(rewardNode, zone, won);
     this.player.gold += gold;
-    const mats = materialDropFor(rewardNode, won);
-    if (mats > 0) addMaterial(this.player, zone.index, mats);
+    const matsRolled = materialDropFor(rewardNode, won);
+    const mats = matsRolled > 0 ? addMaterial(this.player, zone.index, matsRolled).added : 0; // v14: vault-capped
 
     if (!won) {
       this.ambushNode = null; // v6
@@ -1145,6 +1165,7 @@ export class GameController {
   doNpcService(service) {
     let result = null;
     if (service === 'bag') result = upgradeBag(this.player);
+    else if (service === 'matbag') result = upgradeMaterialVault(this.player); // v14
     else if (service === 'vision') result = upgradeVision(this.player);
     else if (service === 'reforge') result = reforgeWeapon(this.player);
     this.npcNotice = result ? 'ok' : 'fail';
@@ -1880,6 +1901,10 @@ export class GameController {
         <p class="legend-note">${label}</p>
         <button class="btn btn-primary" data-action="npc-upgrade-bag" ${check.ok ? '' : 'disabled'}>${t('npc.service')}</button>
         <hr class="npc-divider"/>
+        <p class="npc-svc-name">${t('npc.vesper.matSvc')} — ${t('bag.matCap', { cap: materialCapacity(p) })}</p>
+        <p class="legend-note">${canUpgradeMaterials(p).reason === 'maxed' ? t('npc.vesper.matFull') : t('npc.vesper.matCost', { n: matUpgradeCost(p) })}</p>
+        <button class="btn btn-primary" data-action="npc-upgrade-mats" ${canUpgradeMaterials(p).ok ? '' : 'disabled'}>${t('npc.service')}</button>
+        <hr class="npc-divider"/>
         <p class="npc-svc-name">${t('npc.vesper.cleanseSvc')}</p>
         <p class="legend-note">${t('npc.vesper.cleanseCost', { gold: cleanseCost(p).gold, mat: cleanseCost(p).materials })}</p>
         ${cursedItems.length ? `<div class="loot-list">${cursedItems.map((item) => {
@@ -1996,8 +2021,9 @@ export class GameController {
     const cap = bagCapacity(p);
     const inTown = this.place.kind === 'town'; // v6: selling is town-only now
     const slots = Object.values(EquipmentSlot); // v11: the full 8-slot paper-doll
+    const matCap = materialCapacity(p); // v14
     const matChips = Object.entries(p.materials || {})
-      .map(([key, count]) => `<span class="material-chip">${materialName(Number(key.slice(1)))} ×${count}</span>`).join('') || `<span class="legend-note">—</span>`;
+      .map(([key, count]) => `<span class="material-chip ${count >= matCap ? 'mat-full' : ''}">${materialName(Number(key.slice(1)))} ×${count}/${matCap}</span>`).join('') || `<span class="legend-note">—</span>`;
 
       // v6: Hidden Unique Skill status card (ซ่อน 100% จนกว่าจะปลดล็อก)
           const classDef = CLASS_DEFINITIONS[p.classId];
@@ -2060,7 +2086,7 @@ export class GameController {
           ${['weapon', 'ring', 'necklace', 'bracelet'].map((slot) => this.renderDollSlot(slot, cap)).join('')}
         </div>
       </div>
-      <h3>${t('bag.materials')}</h3>
+      <h3>${t('bag.materials')} <span class="legend-note">${t('bag.matCap', { cap: materialCapacity(p) })}</span></h3>
       <div class="material-row">${matChips}</div>
       ${compareHtml}
       <div class="loot-list">
@@ -2344,6 +2370,7 @@ export class GameController {
       return `
         <h2>${t('event.title')}</h2>
         <p class="reward-line">${t('mat.drop', { n: r.mats, mat: materialName(r.zoneIndex) })}</p>
+        ${r.matOverflow ? `<p class="legend-note">${t('event.matFull', { n: r.matOverflow })}</p>` : ''}
         <button class="btn btn-primary" data-action="continue-node">${t('result.continue')}</button>
       `;
     }
@@ -2445,8 +2472,13 @@ export class GameController {
             </tr>`).join('')}
         </tbody>
       </table>`;
+    const seasonName = t(`season.name.${SEASON.id}`);
+    const seasonWhen = SEASON.endsAt
+      ? t('season.endsAt', { date: new Date(SEASON.endsAt).toLocaleDateString() })
+      : t('season.noEnd');
     return `
       <h2>${t('lb.title')}</h2>
+      <p class="legend-note">${t('lb.season', { name: seasonName })} · ${seasonWhen}</p>
       <div class="menu-actions">${sortBtn('maxCP', t('lb.byCP'))}${sortBtn('maxZone', t('lb.byZone'))}</div>
       ${body}
       <button class="btn btn-secondary" data-action="lb-back">${t('lb.back')}</button>

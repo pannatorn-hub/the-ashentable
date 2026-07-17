@@ -19,7 +19,7 @@
 // ---------------------------------------------------------------------------
 
 import { t } from './i18n.js';
-import { bagCapacity, BAG_MAX_UPGRADES, largestMaterialStack, spendMaterialsOfOneKind } from './inventory.js';
+import { bagCapacity, BAG_MAX_UPGRADES, materialCapacity, MAT_MAX_UPGRADES, largestMaterialStack, spendMaterialsOfOneKind } from './inventory.js';
 import { createEquipment, createCursedEquipment, EquipmentSlot, Rarity, salvageValue, cleanseCurse, rollLootSlot } from './equipment.js';
 import { STARTING_HEARTS } from './player.js';
 
@@ -70,6 +70,29 @@ export function upgradeBag(player) {
   if (!spentKey) return null;
   player.bagUpgrades = (player.bagUpgrades || 0) + 1;
   return { newCapacity: bagCapacity(player), spentKey, cost: check.cost };
+}
+
+// ---------------- เวสเปอร์: v14 Material Vault ----------------
+// The vault upgrade is priced in GOLD (paying materials to store materials
+// would be circular), compounding like every Vesper service: 150 → 375 →
+// 938 → 2,344 → 5,859. Same shape as the bag — capped, upgradeable, Capital
+// only.
+
+export function matUpgradeCost(player) { return Math.round(150 * Math.pow(2.5, player.matUpgrades || 0)); }
+
+export function canUpgradeMaterials(player) {
+  if ((player.matUpgrades || 0) >= MAT_MAX_UPGRADES) return { ok: false, reason: 'maxed' };
+  const cost = matUpgradeCost(player);
+  if ((player.gold || 0) < cost) return { ok: false, reason: 'gold' };
+  return { ok: true, cost };
+}
+
+export function upgradeMaterialVault(player) {
+  const check = canUpgradeMaterials(player);
+  if (!check.ok) return null;
+  player.gold -= check.cost;
+  player.matUpgrades = (player.matUpgrades || 0) + 1;
+  return { newCapacity: materialCapacity(player), cost: check.cost };
 }
 
 // ---------------- เวสเปอร์: v6 Cleanse Curse ----------------

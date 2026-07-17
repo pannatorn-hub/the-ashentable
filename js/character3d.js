@@ -73,18 +73,63 @@ function shade(THREE, hex, mul) {
   return c;
 }
 
+// v13.2: shared 4-step toon gradient — one DataTexture per THREE instance.
+// This is what turns smooth Lambert falloff into the hard cel bands of a
+// manhwa panel ("Surviving the Game as a Barbarian" look).
+const gradientCache = new WeakMap();
+function toonGradient(THREE) {
+  if (gradientCache.has(THREE)) return gradientCache.get(THREE);
+  const tex = new THREE.DataTexture(new Uint8Array([70, 128, 200, 255]), 4, 1, THREE.RedFormat);
+  tex.minFilter = THREE.NearestFilter;
+  tex.magFilter = THREE.NearestFilter;
+  tex.needsUpdate = true;
+  gradientCache.set(THREE, tex);
+  return tex;
+}
+
 function makeMats(THREE, spec) {
   const base = new THREE.Color(spec.tint);
-  return {
-    armor: new THREE.MeshLambertMaterial({ color: base }),
-    armorDark: new THREE.MeshLambertMaterial({ color: shade(THREE, spec.tint, 0.55) }),
-    cloth: new THREE.MeshLambertMaterial({ color: shade(THREE, spec.tint, 0.35) }),
-    skin: new THREE.MeshLambertMaterial({ color: spec.monster ? shade(THREE, spec.tint, 0.8) : 0xd8c2a8 }),
-    metal: new THREE.MeshLambertMaterial({ color: 0x9a97a8 }),
-    wood: new THREE.MeshLambertMaterial({ color: 0x5a4232 }),
-    glow: new THREE.MeshBasicMaterial({ color: base.clone().offsetHSL(0, 0.15, 0.25) }),
-    bone: new THREE.MeshLambertMaterial({ color: 0xd9d2c0 }),
+  // MeshToonMaterial + gradient map = cel shading. Falls back to Lambert on
+  // stripped-down builds (and the headless test stub) transparently.
+  const Toon = THREE.MeshToonMaterial || THREE.MeshLambertMaterial;
+  const grad = THREE.MeshToonMaterial ? toonGradient(THREE) : null;
+  const toon = (color) => {
+    const mt = new Toon({ color });
+    if (grad) mt.gradientMap = grad;
+    return mt;
   };
+  return {
+    armor: toon(base),
+    armorDark: toon(shade(THREE, spec.tint, 0.45)),
+    cloth: toon(shade(THREE, spec.tint, 0.3)),
+    skin: toon(spec.monster ? shade(THREE, spec.tint, 0.75) : new THREE.Color(0xc9ad8b)),
+    metal: toon(new THREE.Color(0x8e8b9e)),
+    wood: toon(new THREE.Color(0x4e3a2c)),
+    glow: new THREE.MeshBasicMaterial({ color: base.clone().offsetHSL(0, 0.15, 0.25) }),
+    bone: toon(new THREE.Color(0xd9d2c0)),
+    // ink outline: back-face shells drawn behind every solid mesh
+    outline: new THREE.MeshBasicMaterial({ color: 0x0a0810, side: THREE.BackSide }),
+  };
+}
+
+/**
+ * v13.2 manhwa ink lines: every solid mesh gets a slightly-inflated
+ * back-face shell in near-black — the classic inverted-hull outline.
+ * Shells share the parent's geometry (no extra buffers), are flagged
+ * isOutline so applyGear never re-tints them, and inherit visibility by
+ * being children of the mesh they outline.
+ */
+function addOutlines(THREE, rig, mats, thickness = 1.06) {
+  const targets = [];
+  rig.traverse((o) => {
+    if (o.geometry && o.material && o.material !== mats.glow && !o.userData.isOutline) targets.push(o);
+  });
+  for (const o of targets) {
+    const shell = new THREE.Mesh(o.geometry, mats.outline);
+    shell.scale.setScalar(thickness);
+    shell.userData.isOutline = true;
+    o.add(shell);
+  }
 }
 
 // ---------------- weapon builders (one per glyph) ----------------
@@ -291,6 +336,12 @@ function mesh(THREE, geo, mat, x = 0, y = 0, z = 0) {
  * Build one character. Pure THREE — no DOM, no renderer. The returned Group
  * carries named parts (head/body/armL/armR/cloak/gear_*) so animateRig and
  * applyGear can address them, plus userData.spec for cache keys.
+ *
+ * v13.2 SILHOUETTE REWORK: chibi is gone. Proportions are now heroic
+ * (~1:8 head-to-height), with a V-tapered torso, wide pauldron line,
+ * muscular arms, long legs and a squared jaw under a shadowing hood —
+ * the gritty manhwa read, sealed by cel shading + ink outlines above.
+ * Standing height ≈ 2.3 units before rig scale.
  */
 export function buildCharacterRig(THREE, spec) {
   const m = makeMats(THREE, spec);
@@ -299,91 +350,101 @@ export function buildCharacterRig(THREE, spec) {
   rig.userData.mats = m;
   const b = spec.bulk || 1;
 
-  // Body — chibi proportions: the head is nearly half the height.
-  const body = mesh(THREE, new THREE.CylinderGeometry(0.34 * b, 0.42 * b, 0.85, 10), m.cloth, 0, 0.62, 0);
+  // Legs — long, planted wide.
+  rig.add(mesh(THREE, new THREE.CylinderGeometry(0.12 * b, 0.15 * b, 0.8, 8), m.armorDark, -0.19 * b, 0.5, 0));
+  rig.add(mesh(THREE, new THREE.CylinderGeometry(0.12 * b, 0.15 * b, 0.8, 8), m.armorDark, 0.19 * b, 0.5, 0));
+  // Hips
+  rig.add(mesh(THREE, new THREE.CylinderGeometry(0.3 * b, 0.33 * b, 0.28, 10), m.cloth, 0, 0.98, 0));
+
+  // Torso — inverted taper: broad chest down to a tight waist.
+  const body = mesh(THREE, new THREE.CylinderGeometry(0.44 * b, 0.27 * b, 0.75, 10), m.cloth, 0, 1.42, 0);
   body.name = 'body';
   rig.add(body);
+  // chest slab pushes the pecs forward — reads muscular even in silhouette
+  rig.add(mesh(THREE, new THREE.BoxGeometry(0.56 * b, 0.3, 0.18), m.cloth, 0, 1.6, 0.14));
 
+  // Neck + head — SMALL. A quarter of the old chibi sphere.
+  rig.add(mesh(THREE, new THREE.CylinderGeometry(0.09, 0.11, 0.16, 8), m.skin, 0, 1.86, 0));
   const head = new THREE.Group();
   head.name = 'head';
-  head.position.set(0, 1.35, 0);
-  head.add(mesh(THREE, new THREE.SphereGeometry(0.4, 14, 12), m.skin));
-  // hood/hair cap
-  const cap = mesh(THREE, new THREE.SphereGeometry(0.42, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), m.armorDark, 0, 0.03, -0.02);
+  head.position.set(0, 2.06, 0);
+  head.userData.baseY = 2.06;
+  head.add(mesh(THREE, new THREE.SphereGeometry(0.24, 12, 10), m.skin));
+  // squared jaw — the single strongest anti-chibi cue
+  head.add(mesh(THREE, new THREE.BoxGeometry(0.26, 0.14, 0.2), m.skin, 0, -0.12, 0.03));
+  // deep hood + brow shadow: eyes sit in darkness, manhwa-style
+  const cap = mesh(THREE, new THREE.SphereGeometry(0.28, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.6), m.armorDark, 0, 0.02, -0.03);
   cap.name = 'cap';
   head.add(cap);
-  if (spec.monster) { // glowing eyes read as "monster" instantly at any size
-    head.add(mesh(THREE, new THREE.SphereGeometry(0.045, 6, 4), m.glow, -0.13, 0.02, 0.36));
-    head.add(mesh(THREE, new THREE.SphereGeometry(0.045, 6, 4), m.glow, 0.13, 0.02, 0.36));
+  head.add(mesh(THREE, new THREE.BoxGeometry(0.4, 0.08, 0.2), m.armorDark, 0, 0.08, 0.14));
+  if (spec.monster) { // glowing eyes burn out of the hood shadow
+    head.add(mesh(THREE, new THREE.SphereGeometry(0.035, 6, 4), m.glow, -0.09, 0.0, 0.21));
+    head.add(mesh(THREE, new THREE.SphereGeometry(0.035, 6, 4), m.glow, 0.09, 0.0, 0.21));
   }
   rig.add(head);
 
-  // Shoulders + arms
+  // Shoulders + arms — heavy pauldron line, thick upper arms, gauntleted fists.
   const mkArm = (side) => {
     const arm = new THREE.Group();
     arm.name = side > 0 ? 'armR' : 'armL';
-    arm.position.set(0.42 * b * side, 1.0, 0);
-    arm.add(mesh(THREE, new THREE.SphereGeometry(0.16 * b, 8, 6), m.armor)); // pauldron
-    arm.add(mesh(THREE, new THREE.CylinderGeometry(0.09, 0.08, 0.5, 8), m.cloth, 0.03 * side, -0.3, 0));
+    arm.position.set(0.52 * b * side, 1.68, 0);
+    arm.add(mesh(THREE, new THREE.SphereGeometry(0.2 * b, 8, 6), m.armor)); // pauldron
+    const upper = mesh(THREE, new THREE.CylinderGeometry(0.12 * b, 0.1 * b, 0.75, 8), m.cloth, 0.06 * side, -0.42, 0);
+    upper.rotation.z = -0.12 * side;
+    arm.add(upper);
+    arm.add(mesh(THREE, new THREE.SphereGeometry(0.11 * b, 8, 6), m.skin, 0.12 * side, -0.78, 0.02)); // fist
     return arm;
   };
-  const armR = mkArm(1), armL = mkArm(-1);
-  rig.add(armR, armL);
+  rig.add(mkArm(1), mkArm(-1));
 
-  // Legs
-  rig.add(mesh(THREE, new THREE.CylinderGeometry(0.11 * b, 0.13 * b, 0.4, 8), m.armorDark, -0.16 * b, 0.2, 0));
-  rig.add(mesh(THREE, new THREE.CylinderGeometry(0.11 * b, 0.13 * b, 0.4, 8), m.armorDark, 0.16 * b, 0.2, 0));
-
-  // Cloak — the dark-fantasy silhouette maker.
-  const cloak = mesh(THREE, new THREE.ConeGeometry(0.5 * b, 1.1, 8, 1, true), m.armorDark, 0, 0.75, -0.14);
+  // Cloak — longer, heavier, hanging off the pauldron line.
+  const cloak = mesh(THREE, new THREE.ConeGeometry(0.55 * b, 1.6, 8, 1, true), m.armorDark, 0, 1.15, -0.18);
   cloak.name = 'cloak';
-  cloak.material = m.armorDark;
   rig.add(cloak);
 
-  // Weapon into the right hand. Off-hand pieces (shields, twin blades, the
-  // servitor skull) are authored at local x ≤ -0.9; snap them to mirror the
-  // left hand, scaled by bulk so brutes hold their gear wider.
+  // Weapon into the right hand, scaled up ~35% to match the taller frame.
+  // Off-hand pieces (shields, twin blades, the servitor skull) are authored
+  // at local x ≤ -0.9; snap them to mirror the left hand.
   const weapon = WEAPONS[spec.glyph](THREE, m);
   weapon.name = 'weapon';
-  weapon.position.set(0.55 * b, 0.55, 0.1);
+  weapon.position.set(0.66 * b, 0.9, 0.12);
+  weapon.scale.setScalar(1.35);
   weapon.children.forEach((c) => {
-    if (c.position.x <= -0.9) c.position.x = (c.name === 'familiar' ? -1.15 : -1.05) * b;
+    if (c.position.x <= -0.9) c.position.x = (c.name === 'familiar' ? -1.05 : -0.98) * b;
   });
   rig.add(weapon);
 
-  // --- v13 paper-doll gear meshes: hidden until applyGear() shows them ---
-  // v13.1: slot keys now match EquipmentSlot EXACTLY — the chest slot's real
-  // id is the legacy 'armor' (save compatibility), which is why chest pieces
-  // never appeared on the model before. Pieces are also much chunkier now:
-  // gear you equip should be readable at a glance, AFK-Journey style.
+  // --- paper-doll gear meshes: hidden until applyGear() shows them ---
+  // Slot keys match EquipmentSlot exactly (chest = legacy 'armor').
+  // v13.2: repositioned onto the tall frame.
   const gear = {
-    head: (() => { // a proper dome helm with a crest, sitting over the cap
+    head: (() => { // a proper dome helm with a crest, sitting over the hood
       const helm = new THREE.Group();
-      helm.add(mesh(THREE, new THREE.SphereGeometry(0.46, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.58), m.metal, 0, 0, 0));
-      helm.add(mesh(THREE, new THREE.BoxGeometry(0.07, 0.2, 0.5), m.metal, 0, 0.28, 0));
-      helm.position.set(0, 1.42, 0);
+      helm.add(mesh(THREE, new THREE.SphereGeometry(0.3, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.62), m.metal, 0, 0, 0));
+      helm.add(mesh(THREE, new THREE.BoxGeometry(0.06, 0.16, 0.36), m.metal, 0, 0.2, 0));
+      helm.position.set(0, 2.12, 0);
       return helm;
     })(),
-    armor: (() => { // chest plate + belt line
+    armor: (() => { // chest plate + belt line, following the V-taper
       const pl = new THREE.Group();
-      pl.add(mesh(THREE, new THREE.CylinderGeometry(0.39 * b, 0.47 * b, 0.55, 10), m.armor, 0, 0, 0));
-      pl.add(mesh(THREE, new THREE.CylinderGeometry(0.44 * b, 0.46 * b, 0.09, 10), m.metal, 0, -0.3, 0));
-      pl.position.set(0, 0.8, 0);
+      pl.add(mesh(THREE, new THREE.CylinderGeometry(0.47 * b, 0.3 * b, 0.62, 10), m.armor, 0, 0, 0));
+      pl.add(mesh(THREE, new THREE.CylinderGeometry(0.33 * b, 0.35 * b, 0.1, 10), m.metal, 0, -0.38, 0));
+      pl.position.set(0, 1.45, 0);
       return pl;
     })(),
-    legs: mesh(THREE, new THREE.CylinderGeometry(0.4 * b, 0.48 * b, 0.3, 10), m.armor, 0, 0.42, 0),
+    legs: mesh(THREE, new THREE.CylinderGeometry(0.34 * b, 0.4 * b, 0.42, 10), m.armor, 0, 0.78, 0),
     boots: (() => {
       const bo = new THREE.Group();
-      bo.add(mesh(THREE, new THREE.BoxGeometry(0.22 * b, 0.16, 0.36), m.metal, -0.16 * b, 0, 0.05));
-      bo.add(mesh(THREE, new THREE.BoxGeometry(0.22 * b, 0.16, 0.36), m.metal, 0.16 * b, 0, 0.05));
-      bo.position.set(0, 0.06, 0);
+      bo.add(mesh(THREE, new THREE.BoxGeometry(0.2 * b, 0.2, 0.34), m.metal, -0.19 * b, 0, 0.05));
+      bo.add(mesh(THREE, new THREE.BoxGeometry(0.2 * b, 0.2, 0.34), m.metal, 0.19 * b, 0, 0.05));
+      bo.position.set(0, 0.1, 0);
       return bo;
     })(),
-    necklace: mesh(THREE, new THREE.TorusGeometry(0.2, 0.035, 6, 14), m.glow, 0, 1.02, 0.32),
-    ring: mesh(THREE, new THREE.TorusGeometry(0.08, 0.028, 6, 10), m.glow, 0.55 * b, 0.5, 0.12),
-    bracelet: mesh(THREE, new THREE.TorusGeometry(0.13, 0.035, 6, 10), m.metal, -0.44 * b, 0.7, 0),
+    necklace: mesh(THREE, new THREE.TorusGeometry(0.17, 0.03, 6, 14), m.glow, 0, 1.74, 0.24),
+    ring: mesh(THREE, new THREE.TorusGeometry(0.08, 0.028, 6, 10), m.glow, 0.66 * b, 0.88, 0.14),
+    bracelet: mesh(THREE, new THREE.TorusGeometry(0.12, 0.035, 6, 10), m.metal, -0.62 * b, 1.0, 0.02),
     weapon: (() => { // an aura ring around the held weapon — rarity-colored
-      const ring = mesh(THREE, new THREE.TorusGeometry(0.26, 0.03, 6, 16), m.glow, 0.55 * b, 1.0, 0.1);
+      const ring = mesh(THREE, new THREE.TorusGeometry(0.3, 0.03, 6, 16), m.glow, 0.66 * b, 1.5, 0.12);
       ring.rotation.x = Math.PI / 2;
       return ring;
     })(),
@@ -399,7 +460,10 @@ export function buildCharacterRig(THREE, spec) {
     rig.add(g);
   });
 
-  rig.scale.setScalar(0.9 + 0.25 * (b - 1));
+  // Ink every solid surface LAST, so gear pieces get outlines too.
+  addOutlines(THREE, rig, m);
+
+  rig.scale.setScalar(0.78 + 0.22 * (b - 1));
   return rig;
 }
 
@@ -420,7 +484,7 @@ export function applyGear(rig, equipment) {
     if (!color) return;
     const bright = !!root.userData.keepBright;
     root.traverse((o) => {
-      if (!o.material || !o.material.color) return;
+      if (!o.material || !o.material.color || o.userData.isOutline) return; // never tint ink lines
       o.material = o.material.clone();
       o.material.color.set(color);
       if (bright) o.material.color.offsetHSL(0, 0.1, 0.22);
@@ -436,7 +500,7 @@ export function animateRig(rig, t, phase = 0) {
   const weapon = rig.getObjectByName('weapon');
   const body = rig.getObjectByName('body');
   if (body) body.scale.y = 1 + Math.sin(t * 1.7 + phase) * 0.02;
-  if (head) head.position.y = 1.35 + Math.sin(t * 1.7 + phase) * 0.025;
+  if (head) head.position.y = (head.userData.baseY || 2.06) + Math.sin(t * 1.7 + phase) * 0.02;
   if (cloak) cloak.rotation.z = Math.sin(t * 0.9 + phase) * 0.05;
   if (weapon) {
     weapon.rotation.z = Math.sin(t * 1.1 + phase) * 0.04;
@@ -490,8 +554,8 @@ export class SnapshotFactory {
     rig.rotation.y = -0.35; // three-quarter hero angle
     scene.add(rig);
     const cam = new THREE.PerspectiveCamera(34, 1, 0.1, 20);
-    cam.position.set(0.15, 1.15, 3.4);
-    cam.lookAt(0, 0.85, 0);
+    cam.position.set(0.2, 1.35, 4.1);   // v13.2: reframed for the tall rig
+    cam.lookAt(0, 0.95, 0);
     this.renderer.render(scene, cam);
     const url = this.canvas.toDataURL('image/png');
     rig.traverse((o) => { o.geometry && o.geometry.dispose(); });
@@ -524,15 +588,15 @@ export class CharacterStage {
     this.scene.add(this.rig);
     // pedestal disc grounds the figure
     const disc = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.8, 0.9, 0.08, 24),
+      new THREE.CylinderGeometry(0.95, 1.05, 0.08, 24),
       new THREE.MeshLambertMaterial({ color: 0x241d33 }),
     );
     disc.position.y = -0.05;
     this.scene.add(disc);
 
     this.camera = new THREE.PerspectiveCamera(34, w / h, 0.1, 20);
-    this.camera.position.set(0, 1.2, 3.6);
-    this.camera.lookAt(0, 0.85, 0);
+    this.camera.position.set(0, 1.35, 4.4); // v13.2: reframed for the tall rig
+    this.camera.lookAt(0, 0.9, 0);
 
     this.clock = new THREE.Clock();
     this.alive = true;
@@ -584,11 +648,11 @@ export class BattleDiorama {
 
     this.player = buildCharacterRig(THREE, playerSpec);
     applyGear(this.player, playerEquipment);
-    this.player.position.set(-1.7, 0, 0);
+    this.player.position.set(-1.9, 0, 0);
     this.player.rotation.y = 0.9; // face the enemy
 
     this.enemy = buildCharacterRig(THREE, enemySpec);
-    this.enemy.position.set(1.7, 0, 0);
+    this.enemy.position.set(1.9, 0, 0);
     this.enemy.rotation.y = -0.9;
 
     const ground = new THREE.Mesh(
@@ -599,8 +663,8 @@ export class BattleDiorama {
     this.scene.add(this.player, this.enemy, ground);
 
     this.camera = new THREE.PerspectiveCamera(38, w / h, 0.1, 30);
-    this.camera.position.set(0, 1.9, 5.4);
-    this.camera.lookAt(0, 0.7, 0);
+    this.camera.position.set(0, 2.1, 6.2); // v13.2: reframed for the tall rigs
+    this.camera.lookAt(0, 0.85, 0);
 
     // transient reaction state: { side, kind, until }
     this.fx = [];
@@ -649,7 +713,7 @@ export class BattleDiorama {
     }
 
     // play transient fx (350ms each)
-    const home = { player: -1.7, enemy: 1.7 };
+    const home = { player: -1.9, enemy: 1.9 };
     this.player.position.x = home.player;
     this.enemy.position.x = home.enemy;
     this.fx = this.fx.filter((fx) => {

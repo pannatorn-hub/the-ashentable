@@ -22,25 +22,63 @@ import {
   rigSpecFromPortrait, rigSpecFromName,
 } from './character3d.js';
 import { CLASS_DEFINITIONS, SECRET_CLASS_DEFINITIONS, UNIQUE_CLASS_DEFINITIONS } from './classes.js';
+import { t } from './i18n.js'; // v13.2: to recognize sensitive PvP strings in the CURRENT language
 
 // One flat lookup: any data-class id → its portrait spec. Data modules are
 // DOM-free, so importing them here (the DOM layer) is the right direction.
 const ALL_CLASSES = { ...CLASS_DEFINITIONS, ...SECRET_CLASS_DEFINITIONS, ...UNIQUE_CLASS_DEFINITIONS };
 
 export async function initVisual3D(rootEl) {
+  if (!rootEl) return null;
   const THREE = await loadThree();
-  if (!THREE || !rootEl) return null;
 
-  const snaps = new SnapshotFactory(THREE, 160);
+  // v13.2: the PvP scrubber must run EVEN WITHOUT WebGL — competitive
+  // information hygiene can't depend on the graphics tier. With no THREE we
+  // observe for scrubbing only and skip every 3D mount below.
+  const snaps = THREE ? new SnapshotFactory(THREE, 160) : null;
   let dollStage = null;   // CharacterStage on the inventory screen
   let diorama = null;     // BattleDiorama on the battle screen
   let hpObserver = null;  // watches .hp-fill style mutations during battle
 
   const gc = () => window.gameController || null;
 
+  // ---------------- v13.2 PvP information scrubber ----------------
+  // Design intent (GDD §5): the Bot Fallback only works as a difficulty
+  // valve if the player can't tell bots from humans. Two places leaked it:
+  //   1) the searching screen advertised the bot mechanic outright
+  //   2) the result line tagged the opponent "(บอทสำรอง, …)" / "(ผู้เล่นจริง, …)"
+  // BOTH labels are scrubbed — hiding only the bot tag would leak by
+  // omission (unlabeled ⇒ bot). Presentation-only: matchType, rewards and
+  // Heart logic in gameController/matchmaking are untouched, and the text
+  // runs on every graphics tier, including the no-WebGL 2D fallback.
+  function scrubPvpInfo(scope) {
+    // (1) the bot-mechanic hint on the searching screen
+    const botNote = t('pvp.botNote');
+    scope.querySelectorAll('.legend-note').forEach((el) => {
+      if (el.dataset.scrubbed) return;
+      if (el.textContent.trim() === botNote) {
+        el.style.display = 'none';
+        el.dataset.scrubbed = '1';
+      }
+    });
+    // (2) the opponent-type tag on the result screen — strip the label but
+    // keep name and CP: "ชื่อ (บอทสำรอง, พลังรบ 850)" → "ชื่อ (พลังรบ 850)"
+    const labels = [`${t('pvp.bot')}, `, `${t('pvp.human')}, `];
+    scope.querySelectorAll('p').forEach((el) => {
+      if (el.dataset.scrubbed) return;
+      const txt = el.textContent;
+      if (!labels.some((l) => txt.includes(l))) return;
+      let clean = txt;
+      for (const l of labels) clean = clean.replace(l, '');
+      el.textContent = clean;
+      el.dataset.scrubbed = '1'; // one-shot: never re-processed, no observer loop
+    });
+  }
+
   // ---------------- decorators ----------------
 
   function decorateClassCards(scope) {
+    if (!snaps) return;
     scope.querySelectorAll('.class-card[data-class]').forEach((card) => {
       if (card.querySelector('.rig-thumb')) return;
       const def = ALL_CLASSES[card.dataset.class];
@@ -57,7 +95,7 @@ export async function initVisual3D(rootEl) {
   }
 
   function mountDollStage(center) {
-    if (dollStage || !gc() || !gc().player) return;
+    if (!THREE || dollStage || !gc() || !gc().player) return;
     const p = gc().player;
     const host = document.createElement('div');
     host.className = 'doll-stage3d';
@@ -72,7 +110,7 @@ export async function initVisual3D(rootEl) {
   }
 
   function mountDiorama(stageEl) {
-    if (diorama || !gc() || !gc().player || !gc().battleState) return;
+    if (!THREE || diorama || !gc() || !gc().player || !gc().battleState) return;
     const g = gc();
     const p = g.player;
     const enemy = g.battleState.enemy;
@@ -138,6 +176,7 @@ export async function initVisual3D(rootEl) {
       if (hpObserver) { hpObserver.disconnect(); hpObserver = null; }
     }
     // mount whatever the current screen offers
+    scrubPvpInfo(rootEl); // must run before paint settles — no bot-text flash
     decorateClassCards(rootEl);
     const center = rootEl.querySelector('.doll-center');
     if (center && !dollStage) mountDollStage(center);
@@ -156,7 +195,7 @@ export async function initVisual3D(rootEl) {
       if (hpObserver) hpObserver.disconnect();
       if (dollStage) dollStage.dispose();
       if (diorama) diorama.dispose();
-      snaps.dispose();
+      if (snaps) snaps.dispose();
     },
   };
 }

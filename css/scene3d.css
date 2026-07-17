@@ -33,6 +33,11 @@
 }
 .doll-stage3d .stage3d-canvas { width: 100% !important; height: 100% !important; }
 
+/* v13.1: once the live 3D model is mounted, the old 2D SVG portrait circle
+   below it is redundant — hide it. In 2D-fallback mode .has-stage3d is
+   never added, so the SVG remains the portrait. */
+.doll-center.has-stage3d .portrait-large { display: none; }
+
 /* Battle diorama: a backdrop band across the top of the battle stage. The
    DOM arena (names, HP bars, VS) renders below it untouched. */
 .battle-3d {

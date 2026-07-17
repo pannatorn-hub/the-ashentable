@@ -609,3 +609,16 @@ h3 { font-family: var(--font-display); font-size: 1.05rem; margin: 0 0 8px; }
 
 /* v14: a full material stack glows a warning amber on the vault chips. */
 .material-chip.mat-full { border-color: #c9973a; color: #e8b45a; }
+
+/* v16: bag discard — the armed state burns red so a second tap is informed. */
+.btn-danger-armed { background: #6e1f2a; border-color: #c94a5a; color: #ffd9de; }
+
+/* v16: spider-silk world map. Roads are curved strands; a strand still
+   guarded by its Lord shows dashed amber with a skull gate at midpoint. */
+.macro-edge { fill: none; }
+.macro-edge.gated { stroke: #c9973a; stroke-dasharray: 5 4; opacity: 0.75; }
+.map-gate circle { fill: #14121c; stroke-width: 1.5; }
+.map-gate.sealed circle { stroke: #c9973a; }
+.map-gate.open circle { stroke: #5fae7d; }
+.map-gate text { font-size: 9px; fill: #e8b45a; pointer-events: none; }
+.map-gate.open text { fill: #8fd8ab; }

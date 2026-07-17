@@ -1,0 +1,59 @@
+/* scene3d.css (v13)
+   -------------------------------------------------------------------------
+   Styles for the three.js layer only. A separate file on purpose: style.css
+   stays untouched, and deleting this one line from index.html (plus the two
+   scene3d imports in main.js) removes the whole 3D layer cleanly.
+   ------------------------------------------------------------------------- */
+
+/* Full-screen WebGL sky behind everything — same slot the CSS
+   .parallax-scene occupies. It only gets the .scene3d-live class after a
+   successful first frame, so a dead canvas never blanks the backdrop. */
+#scene3d-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  display: none;
+  pointer-events: none;
+}
+#scene3d-canvas.scene3d-live { display: block; }
+
+/* 3D class-card thumbnail: drop-in replacement for the 52px portrait SVG. */
+.rig-thumb {
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #241d33, #14121c 70%);
+  border: 1.5px solid #2a2438;
+  flex: 0 0 auto;
+}
+
+/* Live model on the paper-doll screen, above the SVG portrait. */
+.doll-stage3d {
+  width: 100%;
+  height: 190px;
+  margin-bottom: 6px;
+}
+.doll-stage3d .stage3d-canvas { width: 100% !important; height: 100% !important; }
+
+/* Battle diorama: a backdrop band across the top of the battle stage. The
+   DOM arena (names, HP bars, VS) renders below it untouched. */
+.battle-3d {
+  width: 100%;
+  height: 200px;
+  margin-bottom: 4px;
+  border-radius: 10px;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 50% 100%, rgba(90, 70, 130, 0.25), transparent 65%),
+    linear-gradient(#171226, #100d1a);
+  border: 1px solid #2a2438;
+}
+.battle-3d .stage3d-canvas { width: 100% !important; height: 100% !important; }
+
+@media (max-width: 640px) {
+  .battle-3d { height: 150px; }
+  .doll-stage3d { height: 150px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* stages render static poses; nothing extra needed here, but keep the
+     hook for future tuning */
+}

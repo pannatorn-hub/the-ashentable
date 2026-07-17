@@ -42,13 +42,5 @@
   <div id="app"></div>
 
   <script type="module" src="js/main.js"></script>
-  <!-- 🟢 เพิ่มโค้ดชุดนี้ต่อท้ายลงไป เพื่อปลุกระบบ 3D ให้ตื่นและทำงาน 🟢 -->
-  <script type="module">
-    import { initVisual3D } from './js/visual3d.js';
-    
-    // ชี้เป้าไปที่กล่องเกม แล้วสั่งให้ระบบ 3D เข้าไปเกาะ
-    const appRoot = document.getElementById('app');
-    initVisual3D(appRoot).catch(console.error);
-  </script>
 </body>
 </html>

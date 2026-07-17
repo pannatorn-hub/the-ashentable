@@ -6,12 +6,18 @@
   <title>โต๊ะเถ้าธุลี (The Ashen Table) — Rogue-lite PvE &amp; PvP Permadeath Arena</title>
   <link rel="stylesheet" href="css/style.css" />
   <link rel="stylesheet" href="css/animations.css" /><!-- v7: combat cue library -->
+  <link rel="stylesheet" href="css/scene3d.css" /><!-- v13: three.js 2.5D layer -->
 
 </head>
 <body>
 
-  <!-- 2.5D parallax background: each layer moves at a different speed
-       based on its data-depth, driven by js/parallax.js -->
+  <!-- v13: real-WebGL 2.5D sky (js/scene3d.js). Hidden until its first
+       frame succeeds; the CSS parallax below stays as the guaranteed
+       fallback for devices without WebGL or with the 3D layer disabled. -->
+  <canvas id="scene3d-canvas" aria-hidden="true"></canvas>
+
+  <!-- 2.5D parallax background (CSS fallback): each layer moves at a
+       different speed based on its data-depth, driven by js/parallax.js -->
   <div class="parallax-scene" aria-hidden="true">
     <div class="parallax-layer layer-sky" data-depth="0.04" data-drift="true"></div>
     <div class="parallax-layer layer-moon" data-depth="0.08"></div>

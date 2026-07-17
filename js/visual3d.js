@@ -89,8 +89,11 @@ export async function initVisual3D(rootEl) {
       img.alt = '';
       img.width = svg.getAttribute('width') || 52;
       img.height = svg.getAttribute('height') || 52;
-      img.src = snaps.snapshot(rigSpecFromPortrait(def.portrait));
-      svg.replaceWith(img);
+      svg.replaceWith(img); // claim the slot immediately (prevents double-mount)
+      // v15: snapshots are async now (sculpted models load lazily)
+      snaps.snapshot(rigSpecFromPortrait(def.portrait))
+        .then((url) => { img.src = url; })
+        .catch(() => {});
     });
   }
 

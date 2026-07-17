@@ -44,6 +44,12 @@ export function loadThree() {
   if (threePromise) return threePromise;
   threePromise = (async () => {
     if (is3DDisabled() || !hasWebGL()) return null;
+    // v15: the import map in index.html resolves bare 'three' — try it first
+    // so the whole page shares ONE three instance (addons require this).
+    try {
+      const mod = await import('three');
+      if (mod && mod.Scene) return mod;
+    } catch { /* no import map (embeds?) — fall through to direct URLs */ }
     for (const url of THREE_URLS) {
       try {
         const mod = await import(/* @vite-ignore */ url);
@@ -57,4 +63,30 @@ export function loadThree() {
     return null; // all CDNs down — fall back to 2D silently
   })();
   return threePromise;
+}
+
+
+let addonsPromise = null;
+
+/**
+ * v15: loads the glTF toolchain (GLTFLoader + SkeletonUtils) through the
+ * import map. Resolves null when unavailable — model-based characters then
+ * fall back to the procedural rigs automatically.
+ */
+export function loadAddons() {
+  if (addonsPromise) return addonsPromise;
+  addonsPromise = (async () => {
+    if (!(await loadThree())) return null;
+    try {
+      const [g, s] = await Promise.all([
+        import('three/addons/loaders/GLTFLoader.js'),
+        import('three/addons/utils/SkeletonUtils.js'),
+      ]);
+      return { GLTFLoader: g.GLTFLoader, SkeletonUtils: s };
+    } catch (err) {
+      console.warn('three addons unavailable — using procedural rigs:', err.message);
+      return null;
+    }
+  })();
+  return addonsPromise;
 }

@@ -29,6 +29,9 @@
 // keeps combat.js DOM-free.
 // ---------------------------------------------------------------------------
 
+import { loadAddons } from './three-loader.js';
+import { loadModelRig } from './model-library.js';
+
 const REDUCED = typeof matchMedia !== 'undefined'
   && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -475,8 +478,9 @@ export function buildCharacterRig(THREE, spec) {
  * (fresh characters, class-select previews).
  */
 export function applyGear(rig, equipment) {
-  rig.children.forEach((root) => {
-    if (!root.name || !root.name.startsWith('gear_')) return;
+  const roots = [];
+  rig.traverse((o) => { if (o.name && o.name.startsWith('gear_')) roots.push(o); });
+  roots.forEach((root) => {
     const slot = root.name.slice(5);
     const item = equipment && equipment[slot];
     root.visible = !!item;
@@ -507,6 +511,87 @@ export function animateRig(rig, t, phase = 0) {
     const fam = weapon.getObjectByName('familiar');
     if (fam) fam.position.y = 0.9 + Math.sin(t * 2.1 + phase) * 0.08;
   }
+}
+
+// ---------------- v15 unified rig factory ----------------
+
+/**
+ * The ONE way stages obtain a character now. Tries the sculpted glTF model
+ * first (model-library.js); if the loaders or the GLB can't be fetched, the
+ * procedural primitive rig from this file steps back in — same wrapper
+ * interface either way, so stages never know which one they got:
+ *
+ *   { group, isModel, update(dt), react(kind), setEquipment(eq), dispose() }
+ */
+export async function createRig(THREE, spec, { loaders = undefined, equipment = null } = {}) {
+  const lo = loaders === undefined ? await loadAddons() : loaders;
+  if (lo) {
+    try {
+      const model = await loadModelRig(THREE, lo, spec);
+      attachGearAnchors(THREE, model, spec);
+      applyGear(model.group, equipment);
+      return {
+        group: model.group,
+        isModel: true,
+        update(dt) { if (!REDUCED) model.update(dt); },
+        react(kind) { model.react(kind); },
+        setEquipment(eq) { applyGear(model.group, eq); },
+        dispose() { model.dispose(); },
+      };
+    } catch (err) {
+      console.warn(`model rig failed for ${spec.glyph || 'monster'} — procedural fallback:`, err.message);
+    }
+  }
+  // procedural fallback (the v13.2 toon rig)
+  const group = buildCharacterRig(THREE, spec);
+  applyGear(group, equipment);
+  let t = 0;
+  return {
+    group,
+    isModel: false,
+    update(dt) { t += dt; animateRig(group, t, spec.bulk || 0); },
+    react() { /* stages provide positional fx for primitive rigs */ },
+    setEquipment(eq) { applyGear(group, eq); },
+    dispose() {
+      group.traverse((o) => { o.geometry && o.geometry.dispose(); });
+      Object.values(group.userData.mats || {}).forEach((m2) => m2.dispose && m2.dispose());
+    },
+  };
+}
+
+/**
+ * v15 gear on sculpted models: glow accents anchored to REAL BONES where
+ * possible (helm on the head bone, ring on the right hand, bracelet on the
+ * left) so they ride the animations; torso/leg pieces hang at fixed heights
+ * on the group. Same gear_<slot> naming, so applyGear works unchanged.
+ */
+function attachGearAnchors(THREE, model, spec) {
+  const glow = new THREE.MeshBasicMaterial({ color: new THREE.Color(spec.tint).offsetHSL(0, 0.15, 0.28) });
+  const metal = new THREE.MeshBasicMaterial({ color: 0xb9b4c6 });
+  const put = (parent, name, geo, mat, x = 0, y = 0, z = 0, keepBright = false) => {
+    if (!parent) return;
+    const me = new THREE.Mesh(geo, mat);
+    me.position.set(x, y, z);
+    me.name = name;
+    me.visible = false;
+    if (keepBright) me.userData.keepBright = true;
+    parent.add(me);
+    return me;
+  };
+  const g = model.group, a = model.anchors;
+  put(a.head, 'gear_head', new THREE.TorusGeometry(0.24, 0.035, 6, 14), metal, 0, 0.16, 0).rotation.x = Math.PI / 2;
+  put(a.handR, 'gear_ring', new THREE.TorusGeometry(0.07, 0.025, 6, 10), glow, 0, 0.02, 0, true);
+  put(a.handR, 'gear_weapon', new THREE.TorusGeometry(0.2, 0.028, 6, 16), glow, 0, 0.05, 0, true).rotation.x = Math.PI / 2;
+  put(a.handL, 'gear_bracelet', new THREE.TorusGeometry(0.09, 0.028, 6, 10), metal, 0, 0.02, 0);
+  const neck = put(g, 'gear_necklace', new THREE.TorusGeometry(0.14, 0.028, 6, 14), glow, 0, 1.32, 0.14, true);
+  if (neck) neck.rotation.x = Math.PI / 2.3;
+  put(g, 'gear_armor', new THREE.TorusGeometry(0.34, 0.03, 6, 18), metal, 0, 1.0, 0);
+  put(g, 'gear_legs', new THREE.TorusGeometry(0.28, 0.03, 6, 18), metal, 0, 0.55, 0);
+  put(g, 'gear_boots', new THREE.TorusGeometry(0.3, 0.03, 6, 18), metal, 0, 0.12, 0);
+  ['gear_armor', 'gear_legs', 'gear_boots'].forEach((n) => {
+    const o = g.getObjectByName(n);
+    if (o) o.rotation.x = Math.PI / 2;
+  });
 }
 
 // ---------------- shared lighting recipe ----------------
@@ -543,25 +628,30 @@ export class SnapshotFactory {
 
   keyOf(spec) { return `${spec.tint}|${spec.glyph}|${spec.bulk || 1}|${spec.monster ? 1 : 0}`; }
 
-  /** spec → PNG dataURL (cached). */
+  /** v15: spec → Promise<PNG dataURL> (cached). Renders the sculpted model
+   * when available, the procedural rig otherwise. Serialized through a
+   * queue — one hidden renderer serves every thumbnail in the game. */
   snapshot(spec) {
     const key = this.keyOf(spec);
     if (this.cache.has(key)) return this.cache.get(key);
-    const THREE = this.THREE;
-    const scene = new THREE.Scene();
-    addStageLights(THREE, scene, spec.tint);
-    const rig = buildCharacterRig(THREE, spec);
-    rig.rotation.y = -0.35; // three-quarter hero angle
-    scene.add(rig);
-    const cam = new THREE.PerspectiveCamera(34, 1, 0.1, 20);
-    cam.position.set(0.2, 1.35, 4.1);   // v13.2: reframed for the tall rig
-    cam.lookAt(0, 0.95, 0);
-    this.renderer.render(scene, cam);
-    const url = this.canvas.toDataURL('image/png');
-    rig.traverse((o) => { o.geometry && o.geometry.dispose(); });
-    Object.values(rig.userData.mats || {}).forEach((mat) => mat.dispose && mat.dispose());
-    this.cache.set(key, url);
-    return url;
+    const job = (this._queue = (this._queue || Promise.resolve()).then(async () => {
+      const THREE = this.THREE;
+      const scene = new THREE.Scene();
+      addStageLights(THREE, scene, spec.tint);
+      const rig = await createRig(THREE, spec);
+      rig.update(0.001); // settle the idle pose
+      rig.group.rotation.y = -0.35; // three-quarter hero angle
+      scene.add(rig.group);
+      const cam = new THREE.PerspectiveCamera(34, 1, 0.1, 20);
+      cam.position.set(0.2, 1.35, 4.1);
+      cam.lookAt(0, 0.95, 0);
+      this.renderer.render(scene, cam);
+      const url = this.canvas.toDataURL('image/png');
+      rig.dispose();
+      return url;
+    }));
+    this.cache.set(key, job);
+    return job;
   }
 
   dispose() { this.renderer.dispose(); this.cache.clear(); }
@@ -583,9 +673,12 @@ export class CharacterStage {
 
     this.scene = new THREE.Scene();
     addStageLights(THREE, this.scene, spec.tint);
-    this.rig = buildCharacterRig(THREE, spec);
-    applyGear(this.rig, equipment);
-    this.scene.add(this.rig);
+    this.rig = null; // v15: arrives async — the pedestal renders alone until then
+    this.ready = createRig(THREE, spec, { equipment }).then((rig) => {
+      if (!this.alive) { rig.dispose(); return; }
+      this.rig = rig;
+      this.scene.add(rig.group);
+    });
     // pedestal disc grounds the figure
     const disc = new THREE.Mesh(
       new THREE.CylinderGeometry(0.95, 1.05, 0.08, 24),
@@ -604,21 +697,24 @@ export class CharacterStage {
     this._frame();
   }
 
-  setEquipment(equipment) { applyGear(this.rig, equipment); }
+  setEquipment(equipment) { if (this.rig) this.rig.setEquipment(equipment); }
 
   _frame() {
     if (!this.alive) return;
     requestAnimationFrame(this._frame);
     if (document.hidden || !this.host.isConnected) return;
+    const dt = this.clock.getDelta();
     const t = this.clock.getElapsedTime();
-    this.rig.rotation.y = REDUCED ? -0.35 : Math.sin(t * 0.4) * 0.55 - 0.1;
-    animateRig(this.rig, t);
+    if (this.rig) {
+      this.rig.group.rotation.y = REDUCED ? -0.35 : Math.sin(t * 0.4) * 0.55 - 0.1;
+      this.rig.update(dt);
+    }
     this.renderer.render(this.scene, this.camera);
   }
 
   dispose() {
     this.alive = false;
-    this.rig.traverse((o) => { o.geometry && o.geometry.dispose(); });
+    if (this.rig) this.rig.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
@@ -646,21 +742,33 @@ export class BattleDiorama {
     this.scene.fog = new THREE.Fog(0x171226, 6, 16);
     addStageLights(THREE, this.scene, playerSpec.tint);
 
-    this.player = buildCharacterRig(THREE, playerSpec);
-    applyGear(this.player, playerEquipment);
-    this.player.position.set(-1.9, 0, 0);
-    this.player.rotation.y = 0.9; // face the enemy
-
-    this.enemy = buildCharacterRig(THREE, enemySpec);
-    this.enemy.position.set(1.9, 0, 0);
-    this.enemy.rotation.y = -0.9;
+    // v15: both fighters arrive async; the arena renders and each combatant
+    // steps onto the table the moment their model resolves.
+    this.player = null;
+    this.enemy = null;
+    this.ready = Promise.all([
+      createRig(THREE, playerSpec, { equipment: playerEquipment }).then((rig) => {
+        if (!this.alive) { rig.dispose(); return; }
+        this.player = rig;
+        rig.group.position.set(-1.9, 0, 0);
+        rig.group.rotation.y = 0.9; // face the enemy
+        this.scene.add(rig.group);
+      }),
+      createRig(THREE, enemySpec).then((rig) => {
+        if (!this.alive) { rig.dispose(); return; }
+        this.enemy = rig;
+        rig.group.position.set(1.9, 0, 0);
+        rig.group.rotation.y = -0.9;
+        this.scene.add(rig.group);
+      }),
+    ]);
 
     const ground = new THREE.Mesh(
       new THREE.CylinderGeometry(3.4, 3.7, 0.2, 28),
       new THREE.MeshLambertMaterial({ color: 0x201a2e }),
     );
     ground.position.y = -0.12;
-    this.scene.add(this.player, this.enemy, ground);
+    this.scene.add(ground);
 
     this.camera = new THREE.PerspectiveCamera(38, w / h, 0.1, 30);
     this.camera.position.set(0, 2.1, 6.2); // v13.2: reframed for the tall rigs
@@ -684,13 +792,27 @@ export class BattleDiorama {
     addEventListener('resize', this._onResize);
   }
 
-  /** side: 'player'|'enemy' — a lunge toward the foe. */
-  attack(side) { this.fx.push({ side, kind: 'attack', t0: this.clock.getElapsedTime() }); }
+  /** side: 'player'|'enemy' — swing at the foe (real clip on models). */
+  attack(side) {
+    const rig = this._rigOf(side);
+    if (rig && rig.isModel) rig.react('attack');
+    this.fx.push({ side, kind: 'attack', t0: this.clock.getElapsedTime(), soft: !!(rig && rig.isModel) });
+  }
 
-  /** side took damage — recoil + flash. */
-  hit(side) { this.fx.push({ side, kind: 'hit', t0: this.clock.getElapsedTime() }); }
+  /** side took damage — flinch clip on models, recoil either way. */
+  hit(side) {
+    const rig = this._rigOf(side);
+    if (rig && rig.isModel) rig.react('hit');
+    this.fx.push({ side, kind: 'hit', t0: this.clock.getElapsedTime(), soft: !!(rig && rig.isModel) });
+  }
 
-  setHp(side, ratio) { this.hp[side] = Math.max(0, Math.min(1, ratio)); }
+  setHp(side, ratio) {
+    const r = Math.max(0, Math.min(1, ratio));
+    const was = this.hp[side];
+    this.hp[side] = r;
+    const rig = this._rigOf(side);
+    if (rig && rig.isModel && r <= 0 && was > 0) rig.react('death'); // v15: a real death animation
+  }
 
   _rigOf(side) { return side === 'player' ? this.player : this.enemy; }
 
@@ -698,38 +820,46 @@ export class BattleDiorama {
     if (!this.alive) return;
     requestAnimationFrame(this._frame);
     if (document.hidden || !this.host.isConnected) return;
+    const dt = this.clock.getDelta();
     const t = this.clock.getElapsedTime();
 
-    animateRig(this.player, t, 0);
-    animateRig(this.enemy, t, 1.7);
-
-    // low HP reads as a slump; death as a collapse
     for (const side of ['player', 'enemy']) {
       const rig = this._rigOf(side);
-      const hp = this.hp[side];
-      const slump = hp <= 0 ? 1.35 : (1 - hp) * 0.35;
-      rig.rotation.x = REDUCED ? 0 : slump * 0.6;
-      rig.position.y = -slump * 0.25;
+      if (!rig) continue;
+      rig.update(dt);
+      if (!rig.isModel) {
+        // primitive fallback keeps the v13 slump/collapse posing
+        const hp = this.hp[side];
+        const slump = hp <= 0 ? 1.35 : (1 - hp) * 0.35;
+        rig.group.rotation.x = REDUCED ? 0 : slump * 0.6;
+        rig.group.position.y = -slump * 0.25;
+      }
     }
 
-    // play transient fx (350ms each)
+    // positional fx — full lunge/recoil for primitive rigs, a SOFT nudge for
+    // models (their clips carry the motion; a hint of travel sells contact)
     const home = { player: -1.9, enemy: 1.9 };
-    this.player.position.x = home.player;
-    this.enemy.position.x = home.enemy;
+    if (this.player) this.player.group.position.x = home.player;
+    if (this.enemy) this.enemy.group.position.x = home.enemy;
     this.fx = this.fx.filter((fx) => {
       const age = t - fx.t0;
       if (age > 0.35) return false;
       const rig = this._rigOf(fx.side);
+      if (!rig) return false;
       const dir = fx.side === 'player' ? 1 : -1;
+      const mag = fx.soft ? 0.35 : 1;
       const k = Math.sin((age / 0.35) * Math.PI); // out-and-back
-      if (fx.kind === 'attack' && !REDUCED) rig.position.x = home[fx.side] + dir * k * 0.9;
+      if (fx.kind === 'attack' && !REDUCED) rig.group.position.x = home[fx.side] + dir * k * 0.9 * mag;
       if (fx.kind === 'hit' && !REDUCED) {
-        rig.position.x = home[fx.side] - dir * k * 0.35;
-        rig.rotation.z = -dir * k * 0.2;
+        rig.group.position.x = home[fx.side] - dir * k * 0.35 * mag;
+        if (!fx.soft) rig.group.rotation.z = -dir * k * 0.2;
       }
       return true;
     });
-    if (!this.fx.length) { this.player.rotation.z = 0; this.enemy.rotation.z = 0; }
+    if (!this.fx.length) {
+      if (this.player) this.player.group.rotation.z = 0;
+      if (this.enemy) this.enemy.group.rotation.z = 0;
+    }
 
     this.renderer.render(this.scene, this.camera);
   }
@@ -737,7 +867,7 @@ export class BattleDiorama {
   dispose() {
     this.alive = false;
     removeEventListener('resize', this._onResize);
-    [this.player, this.enemy].forEach((rig) => rig.traverse((o) => { o.geometry && o.geometry.dispose(); }));
+    [this.player, this.enemy].forEach((rig) => rig && rig.dispose());
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }

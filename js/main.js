@@ -15,6 +15,8 @@ import { LocalStorageAuthProvider, loadGameState, saveGameState, pickNewestSave 
 import { LocalLeaderboardService } from './leaderboard.js';
 import { GameController } from './gameController.js';
 import { initParallax, initAmbientDrift } from './parallax.js';
+import { initScene3D } from './scene3d.js';   // v13: WebGL 2.5D sky
+import { initVisual3D } from './visual3d.js'; // v13: 3D characters everywhere
 
 // Flip to true AFTER filling firebaseConfig in js/firebase-service.js.
 const USE_FIREBASE = true;
@@ -218,8 +220,14 @@ function bootGuest() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // v13: the CSS parallax boots FIRST so there is never a blank sky, then
+  // the WebGL scene takes over on top of it if (and only if) three.js loads
+  // and the device has WebGL. On failure both inits resolve null and the
+  // CSS layers simply keep running — the game itself never waits on 3D.
   initParallax('.parallax-scene');
   initAmbientDrift('.parallax-scene');
+  initScene3D().catch((err) => console.warn('scene3d skipped:', err.message));
+  initVisual3D(root).catch((err) => console.warn('visual3d skipped:', err.message));
 
   services = await getServices();
 

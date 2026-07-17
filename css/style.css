@@ -606,3 +606,6 @@ h3 { font-family: var(--font-display); font-size: 1.05rem; margin: 0 0 8px; }
 .item-status .item-passive.unlocked { background: rgba(224, 185, 89, 0.10); }
 .item-status .item-passive.locked { background: rgba(120, 120, 140, 0.08); }
 .item-status .item-curse { background: rgba(139, 26, 61, 0.14); }
+
+/* v14: a full material stack glows a warning amber on the vault chips. */
+.material-chip.mat-full { border-color: #c9973a; color: #e8b45a; }

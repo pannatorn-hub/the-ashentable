@@ -219,7 +219,12 @@ function bootGuest() {
   boot(svc.auth.getCurrentUser(), svc);
 }
 
+const APP_VERSION = 'v16'; // v16: bump together with the ?v= tags in index.html
+
 document.addEventListener('DOMContentLoaded', async () => {
+  // Version banner — one glance at the browser console (F12) answers
+  // "which build am I actually running?" whenever caching is suspected.
+  console.info(`โต๊ะเถ้าธุลี — The Ashen Table ${APP_VERSION}`);
   // v13: the CSS parallax boots FIRST so there is never a blank sky, then
   // the WebGL scene takes over on top of it if (and only if) three.js loads
   // and the device has WebGL. On failure both inits resolve null and the

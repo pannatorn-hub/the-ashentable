@@ -75,6 +75,9 @@ export class Matchmaker {
     const suffixes = ['เงามืด', 'เหล็กกล้า', 'โลหิต', 'เถ้าธุลี', 'พายุ', 'เพลิงคลั่ง'];
     const p = prefixes[Math.floor(Math.random() * prefixes.length)];
     const s = suffixes[Math.floor(Math.random() * suffixes.length)];
-    return `${p}${s} (บอท)`;
+    // v17: NO "(บอท)" tag. The Bot Fallback (GDD §5) only functions as a
+    // difficulty valve if bots are indistinguishable from humans — a name
+    // tag defeated the entire design, on the HUD and in every log line.
+    return `${p}${s}`;
   }
 }

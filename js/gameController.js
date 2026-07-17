@@ -208,6 +208,7 @@ export class GameController {
     this.renameSuccess = null;
     this.renameDraft = '';
     this.confirmDiscardId = null; // v16: two-tap "throw away" arming, per item
+    this.inputShieldUntil = 0;    // v17: swallows tap-spam across the battle→loot swap
     this.linkStatus = null;     // null | 'working' | 'error' — Settings' Link Account flow
     this.saveError = null;      // v9: last save failure, surfaced in the HUD instead of swallowed
     // v9.1 SAVE LIFECYCLE — the "time rewind" killers:
@@ -302,6 +303,13 @@ export class GameController {
   }
 
   handleClick(e) {
+    // v17 INPUT SHIELD. Rapid-tapping the arena to fast-forward the replay
+    // used to spill into the loot screen: the replay ends, the DOM swaps,
+    // and the tail of the same tap burst lands on whichever loot button now
+    // sits under the finger — deciding the drop before the player ever saw
+    // it. All three conclude paths arm a 400ms shield right before the swap;
+    // clicks inside the window are eaten, clicks after it behave normally.
+    if (performance.now() < this.inputShieldUntil) return;
     // v7 input lock: while a combat replay is playing, every data-action is
     // swallowed (skill spam, HUD nav, everything). Tapping the arena to
     // fast-forward uses a direct listener from mountBattle, not data-action,
@@ -963,6 +971,7 @@ export class GameController {
       this.prowlerNode = null; // v9.2
       this.returnToSanctuary(); // sets lastResult = { kind: 'defeat_return', placeName, ... }
       Object.assign(this.lastResult, { xp, gold, opponentName: bs.enemy.name });
+      this.inputShieldUntil = performance.now() + 400; // v17: see handleClick
       this.goTo('node_result');
       return;
     }
@@ -1022,6 +1031,7 @@ export class GameController {
       openRoads: lordSlain ? this.openRoadsFromHere() : [], // v9.2: every road this region now offers
     };
     this.persist();
+    this.inputShieldUntil = performance.now() + 400; // v17: see handleClick
     this.goTo('node_result');
   }
 
@@ -1323,6 +1333,7 @@ export class GameController {
   }
 
   concludePvpBattle() {
+    this.inputShieldUntil = performance.now() + 400; // v17: see handleClick
     const bs = this.battleState;
     const won = bs.winner === 'player';
     this.player.hp = this.player.getStats().maxHp; // arena magic mends the flesh; the Hearts remember

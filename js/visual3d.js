@@ -19,7 +19,7 @@
 import { loadThree } from './three-loader.js';
 import {
   SnapshotFactory, CharacterStage, BattleDiorama,
-  rigSpecFromPortrait, rigSpecFromName,
+  rigSpecFromPortrait, rigSpecFromName, humanoidSpecFromName,
 } from './character3d.js';
 import { CLASS_DEFINITIONS, SECRET_CLASS_DEFINITIONS, UNIQUE_CLASS_DEFINITIONS } from './classes.js';
 import { t } from './i18n.js'; // v13.2: to recognize sensitive PvP strings in the CURRENT language
@@ -63,13 +63,17 @@ export async function initVisual3D(rootEl) {
     });
     // (2) the opponent-type tag on the result screen — strip the label but
     // keep name and CP: "ชื่อ (บอทสำรอง, พลังรบ 850)" → "ชื่อ (พลังรบ 850)"
-    const labels = [`${t('pvp.bot')}, `, `${t('pvp.human')}, `];
-    scope.querySelectorAll('p').forEach((el) => {
-      if (el.dataset.scrubbed) return;
+    // v17: ALSO strip the legacy " (บอท)"/" (Bot)" name suffix. v17 removed
+    // it at the source (matchmaking), but battleState is persisted — a match
+    // saved under the old build still carries the tagged name into the HUD
+    // and every log line, so the display layer erases it everywhere.
+    const labels = [`${t('pvp.bot')}, `, `${t('pvp.human')}, `, ' (บอท)', ' (Bot)'];
+    scope.querySelectorAll('p, .combatant-name, .battle-log-line, h2, h3, span').forEach((el) => {
+      if (el.dataset.scrubbed || el.children.length > 0) return; // leaf text nodes only
       const txt = el.textContent;
       if (!labels.some((l) => txt.includes(l))) return;
       let clean = txt;
-      for (const l of labels) clean = clean.replace(l, '');
+      for (const l of labels) clean = clean.split(l).join('');
       el.textContent = clean;
       el.dataset.scrubbed = '1'; // one-shot: never re-processed, no observer loop
     });
@@ -122,9 +126,13 @@ export async function initVisual3D(rootEl) {
     // hash the name into a deterministic look, and let raw mass decide the
     // silhouette — anything out-weighing the player 2:1 reads as a brute.
     const bulk = Math.min(1.8, Math.max(1, (enemy.stats?.maxHp || 60) / Math.max(1, p.getTotalStats?.().maxHp || p.stats?.maxHp || 100)));
+    // v17: PvP opponents (bots AND ghost players) render as ADVENTURERS, not
+    // skeleton beasts — a human-shaped foe is half the disguise.
     const enemySpec = enemy.portrait
       ? rigSpecFromPortrait(enemy.portrait, { bulk })
-      : rigSpecFromName(enemy.name, bulk);
+      : g.pvpMode
+        ? humanoidSpecFromName(enemy.name)
+        : rigSpecFromName(enemy.name, bulk);
 
     const host = document.createElement('div');
     host.className = 'battle-3d';

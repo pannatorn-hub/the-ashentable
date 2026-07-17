@@ -57,6 +57,19 @@ export function rigSpecFromPortrait(portrait, { bulk = 1 } = {}) {
   };
 }
 
+/**
+ * v17: deterministic HUMANOID spec for PvP opponents — bots and ghost
+ * players must look like adventurers, not skeleton beasts. Same name-hash
+ * determinism, but drawn from the player-class archetypes.
+ */
+export function humanoidSpecFromName(name) {
+  let h = 2166136261;
+  const s = String(name || 'ผู้ท้าชิงนิรนาม');
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  h = Math.abs(h);
+  return { tint: `hsl(${h % 360}, 42%, 48%)`, glyph: GLYPH_ARCHETYPES[h % GLYPH_ARCHETYPES.length], bulk: 1 };
+}
+
 /** Deterministic monster spec: same name → same look, every session. */
 export function rigSpecFromName(name, bulk = 1) {
   let h = 2166136261;
@@ -579,9 +592,14 @@ function attachGearAnchors(THREE, model, spec) {
     return me;
   };
   const g = model.group, a = model.anchors;
-  put(a.head, 'gear_head', new THREE.TorusGeometry(0.24, 0.035, 6, 14), metal, 0, 0.16, 0).rotation.x = Math.PI / 2;
+  // v17: NEVER chain off put() — a missing bone (skeleton bodies, future
+  // packs) returns undefined, and one throw here used to sink the whole
+  // model into the primitive fallback. Missing anchor = that accent simply
+  // doesn't render; the model itself must always survive.
+  const rotX = (me, v) => { if (me) me.rotation.x = v; return me; };
+  rotX(put(a.head || g, 'gear_head', new THREE.TorusGeometry(0.24, 0.035, 6, 14), metal, 0, a.head ? 0.16 : 1.55, 0), Math.PI / 2);
   put(a.handR, 'gear_ring', new THREE.TorusGeometry(0.07, 0.025, 6, 10), glow, 0, 0.02, 0, true);
-  put(a.handR, 'gear_weapon', new THREE.TorusGeometry(0.2, 0.028, 6, 16), glow, 0, 0.05, 0, true).rotation.x = Math.PI / 2;
+  rotX(put(a.handR, 'gear_weapon', new THREE.TorusGeometry(0.2, 0.028, 6, 16), glow, 0, 0.05, 0, true), Math.PI / 2);
   put(a.handL, 'gear_bracelet', new THREE.TorusGeometry(0.09, 0.028, 6, 10), metal, 0, 0.02, 0);
   const neck = put(g, 'gear_necklace', new THREE.TorusGeometry(0.14, 0.028, 6, 14), glow, 0, 1.32, 0.14, true);
   if (neck) neck.rotation.x = Math.PI / 2.3;

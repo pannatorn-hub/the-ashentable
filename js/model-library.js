@@ -152,10 +152,18 @@ export async function loadModelRig(THREE, loaders, spec) {
   const rig = {
     group,
     spec,
+    // v17 ROOT-CAUSE FIX for "sculpted models never appeared": three's
+    // GLTFLoader sanitizes bone names for animation tracks — dots are
+    // stripped, so the GLB's `handslot.r` becomes `handslotr` in the scene
+    // graph. The old dotted lookups returned null, the gear-anchor step
+    // then threw, and EVERY character silently fell back to primitives.
+    // Look up both spellings (sanitized first, authored as belt-and-braces).
     anchors: {
       head: group.getObjectByName('head') || null,
-      handR: group.getObjectByName('handslot.r') || group.getObjectByName('hand.r') || null,
-      handL: group.getObjectByName('handslot.l') || group.getObjectByName('hand.l') || null,
+      handR: group.getObjectByName('handslotr') || group.getObjectByName('handslot.r')
+        || group.getObjectByName('handr') || group.getObjectByName('hand.r') || null,
+      handL: group.getObjectByName('handslotl') || group.getObjectByName('handslot.l')
+        || group.getObjectByName('handl') || group.getObjectByName('hand.l') || null,
     },
     update(dt) { mixer.update(dt); },
     idle() {

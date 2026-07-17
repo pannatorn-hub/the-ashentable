@@ -219,7 +219,7 @@ function bootGuest() {
   boot(svc.auth.getCurrentUser(), svc);
 }
 
-const APP_VERSION = 'v16'; // v16: bump together with the ?v= tags in index.html
+const APP_VERSION = 'v17'; // v16: bump together with the ?v= tags in index.html
 
 document.addEventListener('DOMContentLoaded', async () => {
   // Version banner — one glance at the browser console (F12) answers

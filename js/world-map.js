@@ -152,14 +152,16 @@ export function getAvailableMacroNodeIds(macro, world, currentMacroId) {
     // 👇 อนุญาตให้วาปแผนที่โลกไปต่อได้ ก็ต่อเมื่อสู้ชนะบอสที่เฝ้าเส้นทางนั้นไว้แล้วเท่านั้น
     const zone = world.zones[node.zoneIndex];
     if (zone) {
-      // v9 UNLOCK RULE — a road opens only when the Lord guarding it is dead.
-      //   outer / legacy-migrated regions: one Lord guards them all.
-      //   authored regions: 1 Lord : 1 road (node.macroTarget).
+      // v16 UNLOCK RULE — ONE Lord opens exactly ONE road, everywhere.
+      // The old `zone.outer || legacyBossGating` bypass (any single kill
+      // unlocked every road of the region) is gone; `defeatedLords` is the
+      // single source of truth. Legacy and pre-v16-outer saves keep every
+      // road they earned because both amnesties in syncZoneBosses write
+      // those roads INTO defeatedLords at boot — no access is ever revoked,
+      // but from here on each new road demands its own Lord's head.
       // `defeatedLords` lives inside `world`, which is what persist() saves —
       // so an unlock survives reload by construction.
-      if ((zone.outer || zone.legacyBossGating) && zone.lordDefeated) {
-        node.connectsTo.forEach((id) => available.add(id));
-      } else if (Array.isArray(zone.defeatedLords)) {
+      if (Array.isArray(zone.defeatedLords)) {
         zone.defeatedLords.forEach((id) => { if (node.connectsTo.includes(id)) available.add(id); });
       }
     }

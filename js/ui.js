@@ -92,15 +92,42 @@ export function renderWorldMapViewer(ctx) {
 
   const allIds = Object.keys(macro.nodes);
 
+  // v16 SPIDER-SILK EDGES. Every road is a curved strand (quadratic bow
+  // perpendicular to the run) instead of a straight line, so crossing paths
+  // read as separate threads of the web. Each strand from a REGION also
+  // carries its gate truth at the midpoint: ☠ = a living Lord still guards
+  // this specific road (v16: one Lord opens exactly one road), ✓ = his head
+  // was taken and the road is earned. Hub roads (start/capital) are ungated.
   const edgesSvg = allIds.flatMap((id) => {
     const node = macro.nodes[id];
     if (!visible.has(id) || !pos[id]) return [];
+    const srcZone = node.kind === MacroKind.ZONE ? world.zones[node.zoneIndex] : null;
     return node.connectsTo.map((targetId) => {
       if (!pos[targetId]) return '';
       const a = pos[id], b = pos[targetId];
       const targetVisible = visible.has(targetId);
-      const cls = !targetVisible ? 'locked' : available.has(targetId) ? 'reachable' : isMacroNodeDiscovered(macro.nodes[targetId], world) ? 'traveled' : 'locked';
-      return `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" class="map-edge macro-edge ${cls}"/>`;
+      const roadOpen = !srcZone || (Array.isArray(srcZone.defeatedLords) && srcZone.defeatedLords.includes(targetId));
+      const gated = !!srcZone && !roadOpen;
+      const cls = !targetVisible ? 'locked'
+        : available.has(targetId) ? 'reachable'
+        : gated ? 'gated'
+        : isMacroNodeDiscovered(macro.nodes[targetId], world) ? 'traveled' : 'locked';
+      // perpendicular bow — alternate side by target parity so parallel roads fan apart
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len = Math.max(1, Math.hypot(dx, dy));
+      const side = (Number.parseInt(targetId, 36) % 2 === 0 ? 1 : -1);
+      const bow = Math.min(18, len * 0.12) * side;
+      const cx = mx - (dy / len) * bow, cy = my + (dx / len) * bow;
+      const path = `<path d="M ${a.x} ${a.y} Q ${cx} ${cy} ${b.x} ${b.y}" class="map-edge macro-edge ${cls}"/>`;
+      // gate marker only where the player can see the source region's truth
+      if (!srcZone || !isMacroNodeDiscovered(node, world) || !targetVisible) return path;
+      const gx = (a.x + 2 * cx + b.x) / 4, gy = (a.y + 2 * cy + b.y) / 4; // point ON the curve at t=0.5
+      const marker = `<g class="map-gate ${roadOpen ? 'open' : 'sealed'}">
+        <circle cx="${gx}" cy="${gy}" r="7"/>
+        <text x="${gx}" y="${gy + 2.6}" text-anchor="middle">${roadOpen ? '✓' : '☠'}</text>
+      </g>`;
+      return path + marker;
     });
   }).join('');
 
@@ -141,6 +168,7 @@ export function renderWorldMapViewer(ctx) {
       <span><i class="legend-dot cleared"></i>${t('world.viewer.legend.conquered')}</span>
       <span><i class="legend-dot available"></i>${t('world.viewer.legend.available')}</span>
       <span><i class="legend-dot scouted"></i>${t('world.viewer.legend.scouted')}</span>
+      <span><i class="legend-dot gated"></i>${t('world.viewer.legend.gated')}</span>
     </div>
     <button class="btn btn-secondary" data-action="worldmap-back">${t('world.viewer.back')}</button>
   `;

@@ -207,6 +207,7 @@ export class GameController {
     this.renameError = null;
     this.renameSuccess = null;
     this.renameDraft = '';
+    this.confirmDiscardId = null; // v16: two-tap "throw away" arming, per item
     this.linkStatus = null;     // null | 'working' | 'error' — Settings' Link Account flow
     this.saveError = null;      // v9: last save failure, surfaced in the HUD instead of swallowed
     // v9.1 SAVE LIFECYCLE — the "time rewind" killers:
@@ -332,12 +333,13 @@ export class GameController {
       case 'npc-upgrade-vision': this.doNpcService('vision'); break;
       case 'npc-reforge': this.doNpcService('reforge'); break;
       case 'npc-cleanse-curse': this.doCleanseCurse(a.item); break; // v6
-      case 'goto-bag': this.selectedBagItemId = null; this.goTo('bag'); break;
-      case 'bag-select': this.selectedBagItemId = a.item; this.render(); break;
+      case 'goto-bag': this.selectedBagItemId = null; this.confirmDiscardId = null; this.goTo('bag'); break;
+      case 'bag-select': this.selectedBagItemId = a.item; this.confirmDiscardId = null; this.render(); break;
+      case 'bag-discard': this.doDiscardBagItem(a.item); break; // v16: throw away, anywhere
       case 'bag-close-compare': this.selectedBagItemId = null; this.render(); break;
       case 'bag-equip': this.equipFromBag(a.item); break;
       case 'bag-sell': this.sellBagItem(a.item); break;
-      case 'bag-back': this.goTo(this.placeScreen()); break;
+      case 'bag-back': this.confirmDiscardId = null; this.goTo(this.placeScreen()); break;
       case 'unequip': this.unequipToBag(a.slot); break;
       case 'goto-travel': this.goTo('travel'); break;
       case 'travel-to': this.travelTo(a.dest); break;
@@ -1109,6 +1111,27 @@ export class GameController {
   }
 
   /** v6/v12: selling needs a merchant — any Town, or the Capital's market. Loot must be physically carried back. */
+  /**
+   * v16: throw an item away — works EVERYWHERE, unlike selling (town-only).
+   * Two-tap by design: the first press arms "แน่ใจ?" on that one item, the
+   * second press destroys it. Any navigation or selecting another item
+   * disarms. Discarded means gone — no gold, no trace (same finality as the
+   * loot-screen discard).
+   */
+  doDiscardBagItem(itemId) {
+    if (this.confirmDiscardId !== itemId) {
+      this.confirmDiscardId = itemId;
+      this.render();
+      return;
+    }
+    const item = removeFromBag(this.player, itemId);
+    this.confirmDiscardId = null;
+    if (!item) { this.render(); return; }
+    if (this.selectedBagItemId === itemId) this.selectedBagItemId = null;
+    this.persist();
+    this.render();
+  }
+
   sellBagItem(itemId) {
     if (!this.canTradeHere()) return;
     const item = removeFromBag(this.player, itemId);
@@ -2096,6 +2119,7 @@ export class GameController {
             <div class="item-mods">${Object.entries(item.statMods).map(([k, v]) => `+${v} ${t(`stat.${k}`)}`).join(' · ')}</div>
             ${this.renderItemStatusRows(item)}
             <button class="btn btn-tiny btn-primary" data-action="bag-select" data-item="${item.id}">${t('bag.compare')}</button>
+            <button class="btn btn-tiny ${this.confirmDiscardId === item.id ? 'btn-danger-armed' : 'btn-secondary'}" data-action="bag-discard" data-item="${item.id}">${this.confirmDiscardId === item.id ? t('bag.discardConfirm') : t('bag.discard')}</button>
           </div>`).join('') : `<p class="legend-note">${t('bag.empty')}</p>`}
       </div>
       ${!inTown ? `<p class="legend-note">${t('bag.sellLocked')}</p>` : ''}

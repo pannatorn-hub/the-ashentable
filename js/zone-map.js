@@ -216,6 +216,8 @@ export function generateMicroZone(zoneIndex, dangerTier, opts = {}) {
     exits,                      // v9: macro roads out of this region, in Lord-node order
     defeatedLords: [],          // v9: macro ids whose guardian Lord is dead — THE unlock flags
     legacyBossGating: false,    // v9: true only for pre-v9 saves migrated in (see migrateBossGating)
+    perRoadGating: true,        // v16: 1 Lord opens exactly 1 road — OUTER regions included.
+                                // undefined on pre-v16 saves = the one-time amnesty marker below.
   };
 }
 
@@ -271,8 +273,20 @@ export function syncZoneBosses(zone, macroChildren = []) {
   // (4) LEGACY AMNESTY, computed BEFORE we touch anything: a pre-v9.2 region
   // whose single unmapped Lord is already dead earned every road he stood on.
   const hadUnmappedLord = lords.some((n) => n.macroTarget === undefined || n.macroTarget === null);
-  const legacyKill = hadUnmappedLord && zone.lordDefeated
+  // v16: the legacy blanket amnesty applies to PRE-v16 saves only (flag
+  // undefined). A fresh zone whose road-less Lord dies before its roads are
+  // born goes through the one-Lord-one-road stamping below instead —
+  // otherwise every early outer kill would still unlock the whole fan.
+  const legacyKill = zone.perRoadGating === undefined && hadUnmappedLord && zone.lordDefeated
     && lords.some((n) => n.macroTarget == null && (n.bossSlain || n.cleared));
+
+  // v16 OUTER AMNESTY, also computed BEFORE we touch anything. Pre-v16, an
+  // outer region unlocked EVERY road off any single Lord kill
+  // (zone.outer && lordDefeated bypass in getAvailableMacroNodeIds). That
+  // bypass is gone — one Lord now opens exactly one road, everywhere. Saves
+  // that already earned the old blanket unlock keep it (we never revoke
+  // roads a player walked), marked done via perRoadGating.
+  const outerAmnesty = zone.outer && zone.lordDefeated && zone.perRoadGating === undefined;
 
   // (2) stamp targets onto existing Lords, never stealing one already taken.
   const taken = new Set(lords.map((n) => n.macroTarget).filter(Boolean));
@@ -281,6 +295,12 @@ export function syncZoneBosses(zone, macroChildren = []) {
     if (lord.bossSlain === undefined) { lord.bossSlain = false; changed = true; }
     if (lord.macroTarget == null && free.length) {
       lord.macroTarget = free.shift();
+      // v16: a Lord slain while guarding nothing (outer regions are born
+      // road-less) retroactively opens the road he's now stamped with — the
+      // kill happened, the road it becomes is his.
+      if (lord.bossSlain && !zone.defeatedLords.includes(lord.macroTarget)) {
+        zone.defeatedLords.push(lord.macroTarget);
+      }
       changed = true;
     } else if (lord.macroTarget === undefined) {
       lord.macroTarget = null; // a dead-end region's Lord guards no road — legitimate
@@ -320,6 +340,14 @@ export function syncZoneBosses(zone, macroChildren = []) {
     zone.legacyBossGating = false;
     changed = true;
   }
+
+  if (outerAmnesty) {
+    for (const c of children) {
+      if (!zone.defeatedLords.includes(c)) zone.defeatedLords.push(c);
+    }
+    changed = true;
+  }
+  if (zone.perRoadGating === undefined) { zone.perRoadGating = true; changed = true; }
 
   return changed;
 }

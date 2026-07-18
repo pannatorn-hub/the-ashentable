@@ -74,3 +74,6 @@
   /* stages render static poses; nothing extra needed here, but keep the
      hook for future tuning */
 }
+
+/* v17.2: HUD bust — same treatment as class-card thumbs, sized for the bar. */
+.hud-rig-thumb { border-width: 1px; }

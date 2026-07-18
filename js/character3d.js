@@ -612,6 +612,46 @@ function attachGearAnchors(THREE, model, spec) {
   });
 }
 
+// ---------------- v17.3 auto-framing ----------------
+
+/**
+ * Fit a camera to a measured bounding box — the durable fix for cropped
+ * helms. Every body/pose/weapon has a different height (a Spellblade's
+ * raised greatsword tops a Rogue by half a metre), so hand-tuned camera
+ * constants kept clipping someone. Now the stage MEASURES the rig and
+ * solves the camera distance from the vertical FOV (and the horizontal one
+ * via aspect, so narrow hosts fit by width instead of cropping shoulders).
+ * Pure math — no renderer — so test-models.mjs can prove, per body, that
+ * the box's top projects inside the frustum.
+ */
+export function frameCameraToBox(camera, box, { vMargin = 1.22, hMargin = 1.18, lift = 0.04 } = {}) {
+  const h = Math.max(0.001, box.max.y - box.min.y);
+  const w = Math.max(box.max.x - box.min.x, box.max.z - box.min.z);
+  const centerY = (box.max.y + box.min.y) / 2;
+  const vfov = (camera.fov * Math.PI) / 180;
+  const distV = (h * vMargin / 2) / Math.tan(vfov / 2);
+  const distH = (w * hMargin / 2) / (Math.tan(vfov / 2) * Math.max(0.2, camera.aspect));
+  const dist = Math.max(distV, distH, h * 0.8);
+  camera.position.set(0, centerY + h * lift, dist);
+  camera.lookAt(0, centerY, 0);
+  camera.updateProjectionMatrix();
+  return dist;
+}
+
+/** Waist-up bust: anchor at the TOP of the box (helm always in frame), show ~58% down. */
+export function frameCameraToBust(camera, box) {
+  const h = Math.max(0.001, box.max.y - box.min.y);
+  const visH = h * 0.58;
+  // v17.3.1: center the window so the box top sits at 88% of the frame —
+  // the first formula put it at 105% and the frustum test caught it.
+  const cy = box.max.y - visH * 0.44;
+  const vfov = (camera.fov * Math.PI) / 180;
+  const dist = (visH / 2) / Math.tan(vfov / 2);
+  camera.position.set(0.12, cy, dist);
+  camera.lookAt(0, cy, 0);
+  camera.updateProjectionMatrix();
+}
+
 // ---------------- shared lighting recipe ----------------
 
 function addStageLights(THREE, scene, tint) {
@@ -660,11 +700,10 @@ export class SnapshotFactory {
       rig.update(0.001); // settle the idle pose
       rig.group.rotation.y = -0.35; // three-quarter hero angle
       scene.add(rig.group);
-      // v17.1: waist-up bust — in a 52px circle a full-body shot reads as a
-      // sliver; framing chest-and-head makes every class recognizable at a glance.
+      // v17.3: measured bust — anchored to the rig's REAL top so no helm
+      // crest or raised blade is ever clipped, on any body.
       const cam = new THREE.PerspectiveCamera(34, 1, 0.1, 20);
-      cam.position.set(0.16, 1.32, 2.3);
-      cam.lookAt(0, 1.12, 0);
+      frameCameraToBust(cam, new THREE.Box3().setFromObject(rig.group));
       this.renderer.render(scene, cam);
       const url = this.canvas.toDataURL('image/png');
       rig.dispose();
@@ -698,6 +737,9 @@ export class CharacterStage {
       if (!this.alive) { rig.dispose(); return; }
       this.rig = rig;
       this.scene.add(rig.group);
+      // v17.3: measure THIS rig and fit the camera to it (see frameCameraToBox)
+      this._rigBox = new THREE.Box3().setFromObject(rig.group);
+      frameCameraToBox(this.camera, this._rigBox);
     });
     // pedestal disc grounds the figure
     const disc = new THREE.Mesh(
@@ -707,9 +749,8 @@ export class CharacterStage {
     disc.position.y = -0.05;
     this.scene.add(disc);
 
-    // v17.2 FRAMING ("เอาแค่พอดี หัวไม่เลย"): v17.1 went too close and
-    // cropped the helm. Pulled back to frame the FULL body at ~80% of the
-    // band with clear headroom above the helmet crest.
+    // v17.3: these are just the pre-measure defaults — the moment the rig
+    // resolves, frameCameraToBox() refits the camera to its true bounds.
     this.camera = new THREE.PerspectiveCamera(34, w / h, 0.1, 20);
     this.camera.position.set(0, 1.25, 3.85);
     this.camera.lookAt(0, 0.92, 0);
@@ -736,6 +777,7 @@ export class CharacterStage {
       this.camera.aspect = w / h;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(w, h, false); // false: CSS owns the display size
+      if (this._rigBox) frameCameraToBox(this.camera, this._rigBox); // v17.3: refit on new aspect
     };
     if (typeof ResizeObserver !== 'undefined') {
       this._ro = new ResizeObserver(apply);

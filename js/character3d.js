@@ -660,9 +660,11 @@ export class SnapshotFactory {
       rig.update(0.001); // settle the idle pose
       rig.group.rotation.y = -0.35; // three-quarter hero angle
       scene.add(rig.group);
+      // v17.1: waist-up bust — in a 52px circle a full-body shot reads as a
+      // sliver; framing chest-and-head makes every class recognizable at a glance.
       const cam = new THREE.PerspectiveCamera(34, 1, 0.1, 20);
-      cam.position.set(0.2, 1.35, 4.1);
-      cam.lookAt(0, 0.95, 0);
+      cam.position.set(0.16, 1.32, 2.3);
+      cam.lookAt(0, 1.12, 0);
       this.renderer.render(scene, cam);
       const url = this.canvas.toDataURL('image/png');
       rig.dispose();
@@ -705,14 +707,43 @@ export class CharacterStage {
     disc.position.y = -0.05;
     this.scene.add(disc);
 
+    // v17.1 FRAMING: the model fills ~90% of the frame height instead of
+    // ~65% — the paper-doll stage is a portrait, not a landscape.
     this.camera = new THREE.PerspectiveCamera(34, w / h, 0.1, 20);
-    this.camera.position.set(0, 1.35, 4.4); // v13.2: reframed for the tall rig
-    this.camera.lookAt(0, 0.9, 0);
+    this.camera.position.set(0, 1.15, 3.15);
+    this.camera.lookAt(0, 0.86, 0);
 
     this.clock = new THREE.Clock();
     this.alive = true;
     this._frame = this._frame.bind(this);
     this._frame();
+    this._observeResize();
+  }
+
+  /**
+   * v17.1 RESPONSIVE: the drawing buffer and camera aspect must track the
+   * HOST, not the window — scene3d.css stretches the canvas element to 100%
+   * of its container, so any mismatch between buffer aspect and container
+   * aspect literally squashes the character. A ResizeObserver keeps the two
+   * in lock-step through rotations, keyboard popups and layout reflows
+   * (with a window-resize fallback for older browsers).
+   */
+  _observeResize() {
+    const apply = () => {
+      const w = this.host.clientWidth, h = this.host.clientHeight;
+      if (!w || !h) return;
+      this.camera.aspect = w / h;
+      this.camera.updateProjectionMatrix();
+      this.renderer.setSize(w, h, false); // false: CSS owns the display size
+    };
+    if (typeof ResizeObserver !== 'undefined') {
+      this._ro = new ResizeObserver(apply);
+      this._ro.observe(this.host);
+    } else {
+      this._onWinResize = apply;
+      addEventListener('resize', this._onWinResize);
+    }
+    apply();
   }
 
   setEquipment(equipment) { if (this.rig) this.rig.setEquipment(equipment); }
@@ -732,6 +763,8 @@ export class CharacterStage {
 
   dispose() {
     this.alive = false;
+    if (this._ro) this._ro.disconnect();
+    if (this._onWinResize) removeEventListener('resize', this._onWinResize);
     if (this.rig) this.rig.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
@@ -768,29 +801,32 @@ export class BattleDiorama {
       createRig(THREE, playerSpec, { equipment: playerEquipment }).then((rig) => {
         if (!this.alive) { rig.dispose(); return; }
         this.player = rig;
-        rig.group.position.set(-1.9, 0, 0);
+        rig.group.position.set(-1.45, 0, 0); // v17.1: closer duel
         rig.group.rotation.y = 0.9; // face the enemy
         this.scene.add(rig.group);
       }),
       createRig(THREE, enemySpec).then((rig) => {
         if (!this.alive) { rig.dispose(); return; }
         this.enemy = rig;
-        rig.group.position.set(1.9, 0, 0);
+        rig.group.position.set(1.45, 0, 0);
         rig.group.rotation.y = -0.9;
         this.scene.add(rig.group);
       }),
     ]);
 
     const ground = new THREE.Mesh(
-      new THREE.CylinderGeometry(3.4, 3.7, 0.2, 28),
+      new THREE.CylinderGeometry(2.7, 3.0, 0.2, 28), // v17.1: tighter stage
       new THREE.MeshLambertMaterial({ color: 0x201a2e }),
     );
     ground.position.y = -0.12;
     this.scene.add(ground);
 
-    this.camera = new THREE.PerspectiveCamera(38, w / h, 0.1, 30);
-    this.camera.position.set(0, 2.1, 6.2); // v13.2: reframed for the tall rigs
-    this.camera.lookAt(0, 0.85, 0);
+    // v17.1 FRAMING: fighters stand at ±1.45 and the camera sits at 4.6 —
+    // the pair spans most of the band instead of floating in dead space,
+    // with enough margin left for the 0.9-unit attack lunge.
+    this.camera = new THREE.PerspectiveCamera(40, w / h, 0.1, 30);
+    this.camera.position.set(0, 1.65, 4.6);
+    this.camera.lookAt(0, 0.8, 0);
 
     // transient reaction state: { side, kind, until }
     this.fx = [];
@@ -800,13 +836,18 @@ export class BattleDiorama {
     this._frame = this._frame.bind(this);
     this._frame();
 
+    // v17.1: host-tracking resize (see CharacterStage._observeResize for why)
     this._onResize = () => {
       const nw = host.clientWidth, nh = host.clientHeight;
       if (!nw || !nh) return;
       this.camera.aspect = nw / nh;
       this.camera.updateProjectionMatrix();
-      this.renderer.setSize(nw, nh);
+      this.renderer.setSize(nw, nh, false);
     };
+    if (typeof ResizeObserver !== 'undefined') {
+      this._ro = new ResizeObserver(this._onResize);
+      this._ro.observe(host);
+    }
     addEventListener('resize', this._onResize);
   }
 
@@ -856,7 +897,7 @@ export class BattleDiorama {
 
     // positional fx — full lunge/recoil for primitive rigs, a SOFT nudge for
     // models (their clips carry the motion; a hint of travel sells contact)
-    const home = { player: -1.9, enemy: 1.9 };
+    const home = { player: -1.45, enemy: 1.45 }; // v17.1
     if (this.player) this.player.group.position.x = home.player;
     if (this.enemy) this.enemy.group.position.x = home.enemy;
     this.fx = this.fx.filter((fx) => {
@@ -884,6 +925,7 @@ export class BattleDiorama {
 
   dispose() {
     this.alive = false;
+    if (this._ro) this._ro.disconnect();
     removeEventListener('resize', this._onResize);
     [this.player, this.enemy].forEach((rig) => rig && rig.dispose());
     this.renderer.dispose();

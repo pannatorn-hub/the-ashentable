@@ -101,6 +101,25 @@ export async function initVisual3D(rootEl) {
     });
   }
 
+  // v17.2: the top-left HUD icon was the last 2D piece (a circle of
+  // polygons). Swap it for the same sculpted bust the class cards use —
+  // one cached snapshot, zero extra WebGL contexts. The SVG isn't touched
+  // in 2D-fallback mode (no snaps), where it remains the portrait.
+  function decorateHudPortrait(scope) {
+    if (!snaps || !gc() || !gc().player) return;
+    scope.querySelectorAll('.hud-portrait .portrait-svg').forEach((svg) => {
+      const img = document.createElement('img');
+      img.className = 'rig-thumb hud-rig-thumb';
+      img.alt = '';
+      img.width = svg.getAttribute('width') || 44;
+      img.height = svg.getAttribute('height') || 44;
+      svg.replaceWith(img);
+      snaps.snapshot(rigSpecFromPortrait(gc().player.portrait))
+        .then((url) => { img.src = url; })
+        .catch(() => {});
+    });
+  }
+
   function mountDollStage(center) {
     if (!THREE || dollStage || !gc() || !gc().player) return;
     const p = gc().player;
@@ -189,6 +208,7 @@ export async function initVisual3D(rootEl) {
     // mount whatever the current screen offers
     scrubPvpInfo(rootEl); // must run before paint settles — no bot-text flash
     decorateClassCards(rootEl);
+    decorateHudPortrait(rootEl); // v17.2
     const center = rootEl.querySelector('.doll-center');
     if (center && !dollStage) mountDollStage(center);
     if (dollStage && gc() && gc().player) dollStage.setEquipment(gc().player.equipment);

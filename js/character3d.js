@@ -707,11 +707,12 @@ export class CharacterStage {
     disc.position.y = -0.05;
     this.scene.add(disc);
 
-    // v17.1 FRAMING: the model fills ~90% of the frame height instead of
-    // ~65% — the paper-doll stage is a portrait, not a landscape.
+    // v17.2 FRAMING ("เอาแค่พอดี หัวไม่เลย"): v17.1 went too close and
+    // cropped the helm. Pulled back to frame the FULL body at ~80% of the
+    // band with clear headroom above the helmet crest.
     this.camera = new THREE.PerspectiveCamera(34, w / h, 0.1, 20);
-    this.camera.position.set(0, 1.15, 3.15);
-    this.camera.lookAt(0, 0.86, 0);
+    this.camera.position.set(0, 1.25, 3.85);
+    this.camera.lookAt(0, 0.92, 0);
 
     this.clock = new THREE.Clock();
     this.alive = true;

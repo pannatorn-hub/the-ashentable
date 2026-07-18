@@ -622,3 +622,11 @@ h3 { font-family: var(--font-display); font-size: 1.05rem; margin: 0 0 8px; }
 .map-gate.open circle { stroke: #5fae7d; }
 .map-gate text { font-size: 9px; fill: #e8b45a; pointer-events: none; }
 .map-gate.open text { fill: #8fd8ab; }
+
+/* v17.1 mobile battle polish — tighter chrome so the bigger 3D band fits:
+   slimmer arena gap, skill buttons in a 5-across compact row on phones. */
+@media (max-width: 640px) {
+  .battle-arena { gap: 8px; margin-bottom: 12px; }
+  .skill-bar { gap: 6px; }
+  .skill-bar .btn { padding: 10px 6px; font-size: 0.82rem; }
+}

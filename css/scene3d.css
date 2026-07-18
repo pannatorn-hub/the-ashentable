@@ -25,10 +25,12 @@
   flex: 0 0 auto;
 }
 
-/* Live model on the paper-doll screen, above the SVG portrait. */
+/* Live model on the paper-doll screen, above the SVG portrait.
+   v17.1: taller portrait stage — the character is the hero of this screen.
+   min() keeps it from swallowing short landscape viewports. */
 .doll-stage3d {
   width: 100%;
-  height: 190px;
+  height: min(300px, 42vh);
   margin-bottom: 6px;
 }
 .doll-stage3d .stage3d-canvas { width: 100% !important; height: 100% !important; }
@@ -42,7 +44,7 @@
    DOM arena (names, HP bars, VS) renders below it untouched. */
 .battle-3d {
   width: 100%;
-  height: 200px;
+  height: min(280px, 34vh); /* v17.1: bigger fighters, still leaves room for the HUD */
   margin-bottom: 4px;
   border-radius: 10px;
   overflow: hidden;
@@ -53,9 +55,19 @@
 }
 .battle-3d .stage3d-canvas { width: 100% !important; height: 100% !important; }
 
+/* v17.1 phones: keep the models LARGE — the old 150px band made them ants.
+   Heights are viewport-aware so battle stage + skill bar + log still fit
+   one portrait screen without scrolling mid-fight. */
 @media (max-width: 640px) {
-  .battle-3d { height: 150px; }
-  .doll-stage3d { height: 150px; }
+  .battle-3d { height: min(200px, 26vh); border-radius: 8px; }
+  .doll-stage3d { height: min(230px, 32vh); }
+  .rig-thumb { width: 44px; height: 44px; }
+}
+
+/* v17.1 short-landscape phones: the 3D bands yield to the controls. */
+@media (max-height: 480px) {
+  .battle-3d { height: 34vh; }
+  .doll-stage3d { height: 40vh; }
 }
 
 @media (prefers-reduced-motion: reduce) {
